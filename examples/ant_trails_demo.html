@@ -135,19 +135,15 @@ function CubeWithTrail(material) {
     // old left, old bottom
     // old bottom, old right
     // old right, old top
-    // old top, old left
-    // old left, old bottom
-    // old bottom, old right
-    // old right, old top
+    // new top, new left
+    // new left, new bottom
+    // new bottom, new right
+    // new right, new top
   }
 
   trailGeometry.attributes.index.needsUpdate = true;
 
   trailGeometry.offsets = [ { start: 0, index: 0, count: numElements } ];
-
-  // trailGeometry.addAttribute( 'color', Float32Array, numTriangles * 3, 3);
-
-  // colors = trailGeometry.attributes.color.array;
 
   var trailMesh = new THREE.Mesh(trailGeometry, material);
   this.trailGeometry = trailGeometry;
@@ -215,39 +211,6 @@ CubeWithTrail.prototype.addRing = function() {
   this.currentPositionIndex_ = currentPositionIndex % this.maxPositionIndices_;
 };
 
-/*
-CubeWithTrail.prototype.addTriangle = function(positions, normals,
-                                               v1x, v1y, v1z,
-                                               v2x, v2y, v2z,
-                                               v3x, v3y, v3z,
-                                               nx, ny, nz) {
-  var currentTriangleIndex = this.currentTrailTriangle_;
-  var maxNumTriangles = this.maxTrailTriangles_;
-
-  var vertexIndex = currentTriangleIndex * 9;
-
-  positions[vertexIndex + 0] = v1x;
-  positions[vertexIndex + 1] = v1y;
-  positions[vertexIndex + 2] = v1z;
-
-  positions[vertexIndex + 3] = v2x;
-  positions[vertexIndex + 4] = v2y;
-  positions[vertexIndex + 5] = v2z;
-
-  positions[vertexIndex + 6] = v3x;
-  positions[vertexIndex + 7] = v3y;
-  positions[vertexIndex + 8] = v3z;
-
-  for (var ii = 0; ii < 3; ++ii) {
-    normals[vertexIndex + (3 * ii) + 0] = nx;
-    normals[vertexIndex + (3 * ii) + 1] = ny;
-    normals[vertexIndex + (3 * ii) + 2] = nz;
-  }
-
-  this.currentTrailTriangle_ = (currentTriangleIndex + 1) % maxNumTriangles;
-}
-*/
-
 CubeWithTrail.prototype.addToScene = function(scene) {
   scene.add(this.cubeMesh);
   scene.add(this.trailMesh);
@@ -305,61 +268,6 @@ CubeWithTrail.prototype.moveCubeLeavingTrail = function(newPosition) {
   }
 
   this.addRing();
-
-/*
-
-  // this.trailGeometry.boundingBox.addPoint(new THREE.Vector3(newRight, newTop, newDepth));
-
-  // Top
-  this.addTriangle(positions, normals,
-                   newLeft, newTop, newDepth,
-                   oldLeft, oldTop, oldDepth,
-                   newRight, newTop, newDepth,
-                   0, 1, 0);
-  this.addTriangle(positions, normals,
-                   newRight, newTop, newDepth,
-                   oldLeft, oldTop, oldDepth,
-                   oldRight, oldTop, oldDepth,
-                   0, 1, 0);
-
-  // Left
-  this.addTriangle(positions, normals,
-                   newLeft, newBottom, newDepth,
-                   oldLeft, oldBottom, oldDepth,
-                   newLeft, newTop, newDepth,
-                   -1, 0, 0);
-  this.addTriangle(positions, normals,
-                   newLeft, newTop, newDepth,
-                   oldLeft, oldBottom, oldDepth,
-                   oldLeft, oldTop, oldDepth,
-                   -1, 0, 0);
-
-  // Bottom
-  this.addTriangle(positions, normals,
-                   newRight, newBottom, newDepth,
-                   oldRight, oldBottom, oldDepth,
-                   newLeft, newBottom, newDepth,
-                   0, -1, 0);
-
-  this.addTriangle(positions, normals,
-                   newLeft, newBottom, newDepth,
-                   oldRight, oldBottom, oldDepth,
-                   oldLeft, oldBottom, oldDepth,
-                   0, -1, 0);
-
-  // Right
-  this.addTriangle(positions, normals,
-                   oldRight, oldTop, oldDepth,
-                   oldRight, oldBottom, oldDepth,
-                   newRight, newTop, newDepth,
-                   1, 0, 0);
-  this.addTriangle(positions, normals,
-                   newRight, newTop, newDepth,
-                   oldRight, oldBottom, oldDepth,
-                   newRight, newBottom, newDepth,
-                   1, 0, 0);
-
-*/
 
   this.trailGeometry.computeBoundingSphere();
   this.trailGeometry.attributes.position.needsUpdate = true;
