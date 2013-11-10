@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>trails</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <style>
+      body {
+      color: #cccccc;
+      font-family:Monospace;
+      font-size:13px;
+      text-align:center;
+
+      background-color: #050505;
+      margin: 0px;
+      overflow: hidden;
+      }
+
+      #info {
+      position: absolute;
+      top: 0px; width: 100%;
+      padding: 5px;
+      }
+
+      a {
+
+      color: #0080ff;
+      }
+
+    </style>
+  </head>
+  <body>
+
+    <div id="container"></div>
+    <div id="info">trails</div>
+
+    <script src="../build/three.min.js"></script>
+
+    <script src="js/Detector.js"></script>
+    <script src="js/libs/stats.min.js"></script>
+    <script src="js/controls/TrackballControls.js"></script>
+
+    <script>
+
+if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
+
+var container, stats;
+
+var camera, controls, scene, renderer;
+
+var mesh;
+
+var material;
+
+var positions, colors, normals;
+
+var cube;
+
+function CubeWithTrail(material) {
+  this.cubeSize_ = 10;
+  this.cubePosition_ = new THREE.Vector3();
+  this.cubeGeometry = new THREE.CubeGeometry(this.cubeSize_, this.cubeSize_, this.cubeSize_);
+  this.cubeGeometry.computeBoundingSphere();
+  this.cubeMesh = new THREE.Mesh(this.cubeGeometry, material);
+
+  // Each time we add a new segment to the trail, we need to add a
+  // ring which is not connected to the previous part of the trail.
+  // The reason for this is that when we get to the end of the
+  // geometry buffer and wrap around, we mustn't connect the beginning
+  // and end of the trail.
+
+  // 8 independent triangles = 24 elements per ring.
+  var numElementsPerRing = 3 * 2 * 4;
+
+  // We consume this number of indices per ring in order to have two
+  // distinct normals per vertex.
+  var numIndicesPerRing = 4 * 2 * 2;
+
+  var numRings = Math.floor(65535 / numIndicesPerRing);
+
+  var numElements = numRings * numElementsPerRing;
+  var numVertices = numRings * numIndicesPerRing;
+
+  var trailGeometry = new THREE.BufferGeometry();
+  trailGeometry.addAttribute('index', Uint16Array, numElements, 1);
+  trailGeometry.addAttribute('position', Float32Array, numVertices, 3);
+  trailGeometry.addAttribute('normal', Float32Array, numVertices, 3);
+  trailGeometry.attributes.position.dynamic = true;
+  trailGeometry.attributes.normal.dynamic = true;
+  var indices = trailGeometry.attributes.index.array;
+
+  var outputIndex = 0;
+  var baseIndex = 0;
+  for (var ii = 0; ii < numRings; ++ii) {
+    // Old vertices first, then new vertices, counterclockwise
+    // orientation as seen looking from the inside of the trail in
+    // the direction it's being constructed.
+    //
+    // Each vertex is duplicated in order to have two different
+    // normals per vertex for the two faces it participates in.
+
+    // Top face
+    indices[outputIndex++] = baseIndex;
+    indices[outputIndex++] = baseIndex + 7;
+    indices[outputIndex++] = baseIndex + 15;
+    indices[outputIndex++] = baseIndex;
+    indices[outputIndex++] = baseIndex + 15;
+    indices[outputIndex++] = baseIndex + 8;
+    // Left face
+    indices[outputIndex++] = baseIndex + 2;
+    indices[outputIndex++] = baseIndex + 1;
+    indices[outputIndex++] = baseIndex + 9;
+    indices[outputIndex++] = baseIndex + 2;
+    indices[outputIndex++] = baseIndex + 9;
+    indices[outputIndex++] = baseIndex + 10;
+    // Bottom face
+    indices[outputIndex++] = baseIndex + 4;
+    indices[outputIndex++] = baseIndex + 3;
+    indices[outputIndex++] = baseIndex + 11;
+    indices[outputIndex++] = baseIndex + 4;
+    indices[outputIndex++] = baseIndex + 11;
+    indices[outputIndex++] = baseIndex + 12;
+    // Right face
+    indices[outputIndex++] = baseIndex + 6;
+    indices[outputIndex++] = baseIndex + 5;
+    indices[outputIndex++] = baseIndex + 13;
+    indices[outputIndex++] = baseIndex + 6;
+    indices[outputIndex++] = baseIndex + 13;
+    indices[outputIndex++] = baseIndex + 14;
+
+    baseIndex += numIndicesPerRing;
+
+    // Normals are inserted into the normal array in the following order:
+    // old top, old left
+    // old left, old bottom
+    // old bottom, old right
+    // old right, old top
+    // old top, old left
+    // old left, old bottom
+    // old bottom, old right
+    // old right, old top
+  }
+
+  trailGeometry.attributes.index.needsUpdate = true;
+
+  trailGeometry.offsets = [ { start: 0, index: 0, count: numElements } ];
+
+  // trailGeometry.addAttribute( 'color', Float32Array, numTriangles * 3, 3);
+
+  // colors = trailGeometry.attributes.color.array;
+
+  var trailMesh = new THREE.Mesh(trailGeometry, material);
+  this.trailGeometry = trailGeometry;
+  this.trailMesh = trailMesh;
+
+  this.currentPositionIndex_ = 0;
+  this.maxPositionIndices_ = 3 * numVertices;
+
+  // top left, bottom left, bottom right, top right
+  this.oldRingVertices_ = new Array(4);
+  this.newRingVertices_ = new Array(4);
+  // top, left, bottom, right
+  this.ringNormals_ = new Array(4);
+
+  this.isFirstRing_ = true;
+
+  function fillWithVectors(a) {
+    for (var ii = 0; ii < a.length; ++ii) {
+      a[ii] = new THREE.Vector3();
+    }
+  }
+  fillWithVectors(this.oldRingVertices_);
+  fillWithVectors(this.newRingVertices_);
+  fillWithVectors(this.ringNormals_);
+}
+
+CubeWithTrail.prototype.addRing = function() {
+  var positions = this.trailGeometry.attributes.position.array;
+  var normals = this.trailGeometry.attributes.normal.array;
+
+  var currentPositionIndex = this.currentPositionIndex_;
+
+  for (var ii = 0; ii < this.oldRingVertices_.length; ++ii) {
+    positions[currentPositionIndex++] = this.oldRingVertices_[ii].x;
+    positions[currentPositionIndex++] = this.oldRingVertices_[ii].y;
+    positions[currentPositionIndex++] = this.oldRingVertices_[ii].z;
+    positions[currentPositionIndex++] = this.oldRingVertices_[ii].x;
+    positions[currentPositionIndex++] = this.oldRingVertices_[ii].y;
+    positions[currentPositionIndex++] = this.oldRingVertices_[ii].z;
+  }
+
+  for (var ii = 0; ii < this.newRingVertices_.length; ++ii) {
+    positions[currentPositionIndex++] = this.newRingVertices_[ii].x;
+    positions[currentPositionIndex++] = this.newRingVertices_[ii].y;
+    positions[currentPositionIndex++] = this.newRingVertices_[ii].z;
+    positions[currentPositionIndex++] = this.newRingVertices_[ii].x;
+    positions[currentPositionIndex++] = this.newRingVertices_[ii].y;
+    positions[currentPositionIndex++] = this.newRingVertices_[ii].z;
+  }
+  
+  currentPositionIndex = this.currentPositionIndex_;
+
+  for (var ii = 0; ii < 2; ++ii) {
+    var len = this.ringNormals_.length;
+    for (var jj = 0; jj < len; ++jj) {
+      normals[currentPositionIndex++] = this.ringNormals_[jj].x;
+      normals[currentPositionIndex++] = this.ringNormals_[jj].y;
+      normals[currentPositionIndex++] = this.ringNormals_[jj].z;
+      normals[currentPositionIndex++] = this.ringNormals_[(jj + 1) % len].x;
+      normals[currentPositionIndex++] = this.ringNormals_[(jj + 1) % len].y;
+      normals[currentPositionIndex++] = this.ringNormals_[(jj + 1) % len].z;
+    }
+  }
+
+  this.currentPositionIndex_ = currentPositionIndex % this.maxPositionIndices_;
+};
+
+/*
+CubeWithTrail.prototype.addTriangle = function(positions, normals,
+                                               v1x, v1y, v1z,
+                                               v2x, v2y, v2z,
+                                               v3x, v3y, v3z,
+                                               nx, ny, nz) {
+  var currentTriangleIndex = this.currentTrailTriangle_;
+  var maxNumTriangles = this.maxTrailTriangles_;
+
+  var vertexIndex = currentTriangleIndex * 9;
+
+  positions[vertexIndex + 0] = v1x;
+  positions[vertexIndex + 1] = v1y;
+  positions[vertexIndex + 2] = v1z;
+
+  positions[vertexIndex + 3] = v2x;
+  positions[vertexIndex + 4] = v2y;
+  positions[vertexIndex + 5] = v2z;
+
+  positions[vertexIndex + 6] = v3x;
+  positions[vertexIndex + 7] = v3y;
+  positions[vertexIndex + 8] = v3z;
+
+  for (var ii = 0; ii < 3; ++ii) {
+    normals[vertexIndex + (3 * ii) + 0] = nx;
+    normals[vertexIndex + (3 * ii) + 1] = ny;
+    normals[vertexIndex + (3 * ii) + 2] = nz;
+  }
+
+  this.currentTrailTriangle_ = (currentTriangleIndex + 1) % maxNumTriangles;
+}
+*/
+
+CubeWithTrail.prototype.addToScene = function(scene) {
+  scene.add(this.cubeMesh);
+  scene.add(this.trailMesh);
+}
+
+CubeWithTrail.prototype.setCubePosition = function(newPosition) {
+  this.cubeMesh.position.copy(newPosition);
+  this.cubePosition_.copy(newPosition);
+}
+
+CubeWithTrail.prototype.moveCubeLeavingTrail = function(newPosition) {
+  // Add new vertices to the trail
+  var oldPosition = this.cubePosition_;
+  // Generate 8 new triangles
+  var halfSize = this.cubeSize_ / 2;
+
+  var oldTop = oldPosition.y + halfSize;
+  var oldBottom = oldPosition.y - halfSize;
+  var oldLeft = oldPosition.x - halfSize;
+  var oldRight = oldPosition.x + halfSize;
+  var oldDepth = oldPosition.z + halfSize;
+
+  for (var ii = 0; ii < this.oldRingVertices_.length; ++ii) {
+    this.oldRingVertices_[ii].copy(this.newRingVertices_[ii]);
+  }
+
+  var newTop = newPosition.y + halfSize;
+  var newBottom = newPosition.y - halfSize;
+  var newLeft = newPosition.x - halfSize;
+  var newRight = newPosition.x + halfSize;
+  var newDepth = newPosition.z + halfSize;
+
+  this.newRingVertices_[0].set(newLeft, newTop, newDepth);
+  this.newRingVertices_[1].set(newLeft, newBottom, newDepth);
+  this.newRingVertices_[2].set(newRight, newBottom, newDepth);
+  this.newRingVertices_[3].set(newRight, newTop, newDepth);
+
+  var positions = this.trailGeometry.attributes.position.array;
+  var normals = this.trailGeometry.attributes.normal.array;
+
+  this.setCubePosition(newPosition);
+
+  if (this.isFirstRing_) {
+    this.isFirstRing_ = false;
+
+    // Set up the normals.
+    this.ringNormals_[0].set(  0,  1,  0);
+    this.ringNormals_[1].set( -1,  0,  0);
+    this.ringNormals_[2].set(  0, -1,  0);
+    this.ringNormals_[3].set(  1,  0,  0);
+
+    // Don't emit until we have populated both oldRingVertices_ and
+    // newRingVertices_.
+    return;
+  }
+
+  this.addRing();
+
+/*
+
+  // this.trailGeometry.boundingBox.addPoint(new THREE.Vector3(newRight, newTop, newDepth));
+
+  // Top
+  this.addTriangle(positions, normals,
+                   newLeft, newTop, newDepth,
+                   oldLeft, oldTop, oldDepth,
+                   newRight, newTop, newDepth,
+                   0, 1, 0);
+  this.addTriangle(positions, normals,
+                   newRight, newTop, newDepth,
+                   oldLeft, oldTop, oldDepth,
+                   oldRight, oldTop, oldDepth,
+                   0, 1, 0);
+
+  // Left
+  this.addTriangle(positions, normals,
+                   newLeft, newBottom, newDepth,
+                   oldLeft, oldBottom, oldDepth,
+                   newLeft, newTop, newDepth,
+                   -1, 0, 0);
+  this.addTriangle(positions, normals,
+                   newLeft, newTop, newDepth,
+                   oldLeft, oldBottom, oldDepth,
+                   oldLeft, oldTop, oldDepth,
+                   -1, 0, 0);
+
+  // Bottom
+  this.addTriangle(positions, normals,
+                   newRight, newBottom, newDepth,
+                   oldRight, oldBottom, oldDepth,
+                   newLeft, newBottom, newDepth,
+                   0, -1, 0);
+
+  this.addTriangle(positions, normals,
+                   newLeft, newBottom, newDepth,
+                   oldRight, oldBottom, oldDepth,
+                   oldLeft, oldBottom, oldDepth,
+                   0, -1, 0);
+
+  // Right
+  this.addTriangle(positions, normals,
+                   oldRight, oldTop, oldDepth,
+                   oldRight, oldBottom, oldDepth,
+                   newRight, newTop, newDepth,
+                   1, 0, 0);
+  this.addTriangle(positions, normals,
+                   newRight, newTop, newDepth,
+                   oldRight, oldBottom, oldDepth,
+                   newRight, newBottom, newDepth,
+                   1, 0, 0);
+
+*/
+
+  this.trailGeometry.computeBoundingSphere();
+  this.trailGeometry.attributes.position.needsUpdate = true;
+  this.trailGeometry.attributes.normal.needsUpdate = true;
+}
+
+function init() {
+
+  container = document.getElementById( 'container' );
+
+  //
+
+  console.log('window.innerWidth/innerHeight: (' + window.innerWidth + ', ' + window.innerHeight + ')');
+  camera = new THREE.PerspectiveCamera( 30, window.innerWidth / window.innerHeight, 1, 500 );
+  camera.position.y = 30;
+  camera.position.z = 200;
+
+  scene = new THREE.Scene();
+  scene.add(camera);
+
+  scene.add( new THREE.AmbientLight( 0x444444 ) );
+
+  var light1 = new THREE.DirectionalLight( 0xffffff, 0.5 );
+  light1.position.set( 1, 1, 1 );
+  scene.add( light1 );
+
+  var light2 = new THREE.DirectionalLight( 0xffffff, 1.5 );
+  light2.position.set( 0, -1, 0 );
+  scene.add( light2 );
+
+  material = new THREE.MeshPhongMaterial( {
+    color: 0xff0000, ambient: 0xff0000, specular: 0xffffff,
+    shininess: 250,
+    side: THREE.DoubleSide
+  } );
+
+
+  cube = new CubeWithTrail(material);
+  cube.addToScene(scene);
+
+  renderer = new THREE.WebGLRenderer( { alpha: false } );
+  renderer.setClearColor( new THREE.Color(0x000000) );
+  renderer.setSize( window.innerWidth, window.innerHeight );
+
+//  renderer.gammaInput = true;
+//  renderer.gammaOutput = true;
+//  renderer.physicallyBasedShading = true;
+
+  container.appendChild( renderer.domElement );
+
+  controls = new THREE.TrackballControls(camera, renderer.domElement);
+  controls.target.set(0, 0, 0);
+
+  //
+
+  stats = new Stats();
+  stats.domElement.style.position = 'absolute';
+  stats.domElement.style.top = '0px';
+  container.appendChild( stats.domElement );
+
+  //
+
+  window.addEventListener( 'resize', onWindowResize, false );
+
+}
+
+function onWindowResize() {
+  console.log("resize");
+
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+
+  renderer.setSize( window.innerWidth, window.innerHeight );
+}
+
+//
+
+function animate() {
+
+  requestAnimationFrame( animate );
+
+  render();
+  stats.update();
+
+}
+
+var firstTime = true;
+
+function render() {
+
+  var time = Date.now() * 0.001;
+
+//  mesh.rotation.x = time * 0.25;
+//  mesh.rotation.y = time * 0.5;
+
+  /*
+  var radius = 20;
+  camera.position.x = radius * Math.sin(time * 4);
+  camera.position.y = radius * Math.cos(time * 4);
+  camera.position.z = 200;
+  */
+//  camera.position.y = 30;
+//  camera.position.z = 200;
+//  camera.lookAt(scene.position);
+
+  var cubeRadius = 50;
+  var cubePosition = new THREE.Vector3(cubeRadius * Math.sin(time / 2),
+                                       30 * Math.sin(time / 10),
+                                       cubeRadius * -1 * Math.cos(time / 2));
+  if (firstTime) {
+    cube.setCubePosition(cubePosition);
+  } else {
+    cube.moveCubeLeavingTrail(cubePosition);
+  }
+  firstTime = false;
+
+  controls.update();
+  renderer.render( scene, camera );
+}
+
+init();
+animate();
+
+    </script>
+  </body>
+</html>
