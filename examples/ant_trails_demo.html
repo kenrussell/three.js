@@ -58,10 +58,17 @@ var cube;
 
 function CubeWithTrail(material) {
   this.cubeSize_ = 10;
-  this.cubePosition_ = new THREE.Vector3();
   this.cubeGeometry = new THREE.CubeGeometry(this.cubeSize_, this.cubeSize_, this.cubeSize_);
   this.cubeGeometry.computeBoundingSphere();
   this.cubeMesh = new THREE.Mesh(this.cubeGeometry, material);
+
+  // Object space
+  var halfSize = this.cubeSize_ / 2;
+  this.cubeBackfaceVertices_ = new Array(4);
+  this.cubeBackfaceVertices_[0] = new THREE.Vector3(-halfSize,  halfSize, halfSize);
+  this.cubeBackfaceVertices_[1] = new THREE.Vector3(-halfSize, -halfSize, halfSize);
+  this.cubeBackfaceVertices_[2] = new THREE.Vector3( halfSize, -halfSize, halfSize);
+  this.cubeBackfaceVertices_[3] = new THREE.Vector3( halfSize,  halfSize, halfSize);
 
   // Each time we add a new segment to the trail, we need to add a
   // ring which is not connected to the previous part of the trail.
@@ -218,40 +225,27 @@ CubeWithTrail.prototype.addToScene = function(scene) {
 
 CubeWithTrail.prototype.setCubePosition = function(newPosition) {
   this.cubeMesh.position.copy(newPosition);
-  this.cubePosition_.copy(newPosition);
 }
 
 CubeWithTrail.prototype.moveCubeLeavingTrail = function(newPosition) {
-  // Add new vertices to the trail
-  var oldPosition = this.cubePosition_;
-  // Generate 8 new triangles
-  var halfSize = this.cubeSize_ / 2;
-
-  var oldTop = oldPosition.y + halfSize;
-  var oldBottom = oldPosition.y - halfSize;
-  var oldLeft = oldPosition.x - halfSize;
-  var oldRight = oldPosition.x + halfSize;
-  var oldDepth = oldPosition.z + halfSize;
-
   for (var ii = 0; ii < this.oldRingVertices_.length; ++ii) {
     this.oldRingVertices_[ii].copy(this.newRingVertices_[ii]);
   }
-
-  var newTop = newPosition.y + halfSize;
-  var newBottom = newPosition.y - halfSize;
-  var newLeft = newPosition.x - halfSize;
-  var newRight = newPosition.x + halfSize;
-  var newDepth = newPosition.z + halfSize;
-
-  this.newRingVertices_[0].set(newLeft, newTop, newDepth);
-  this.newRingVertices_[1].set(newLeft, newBottom, newDepth);
-  this.newRingVertices_[2].set(newRight, newBottom, newDepth);
-  this.newRingVertices_[3].set(newRight, newTop, newDepth);
 
   var positions = this.trailGeometry.attributes.position.array;
   var normals = this.trailGeometry.attributes.normal.array;
 
   this.setCubePosition(newPosition);
+
+  this.cubeMesh.updateMatrixWorld();
+  var worldMatrix = this.cubeMesh.matrixWorld;
+
+  // Now compute the vertices by actually transforming the cube's geometry.
+  var len = this.cubeBackfaceVertices_.length;
+  for (var ii = 0; ii < len; ++ii) {
+    this.newRingVertices_[ii].copy(this.cubeBackfaceVertices_[ii]);
+    this.newRingVertices_[ii].applyMatrix4(worldMatrix);
+  }
 
   if (this.isFirstRing_) {
     this.isFirstRing_ = false;
