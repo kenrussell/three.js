@@ -58,8 +58,8 @@ var cube;
 
 var EPSILON = 0.001;
 
-function CubeWithTrail(material) {
-  this.cubeSize_ = 10;
+function CubeWithTrail(material, cubeSize) {
+  this.cubeSize_ = cubeSize;
   this.cubeGeometry = new THREE.CubeGeometry(this.cubeSize_, this.cubeSize_, this.cubeSize_);
   this.cubeGeometry.computeBoundingSphere();
   this.cubeMesh = new THREE.Mesh(this.cubeGeometry, material);
@@ -185,6 +185,10 @@ function CubeWithTrail(material) {
   this.velocity_ = 0.2;
   // How quickly the cube interpolates toward the target (0..1).
   this.trackingRate_ = 0.5;
+}
+
+CubeWithTrail.prototype.setCubeSize = function(cubeSize) {
+  this.cubeSize_ = cubeSize;
 }
 
 CubeWithTrail.prototype.chaseTarget = function(target) {
@@ -320,7 +324,7 @@ CubeWithTrail.prototype.moveCubeLeavingTrail = function() {
   this.trailGeometry.attributes.normal.needsUpdate = true;
 };
 
-function CubeShooter(scene, camera, material, clickDistance, centerPoint, radius) {
+function CubeShooter(scene, camera, material, clickDistance, centerPoint, cubeSize, radius) {
   this.scene_ = scene;
   this.camera_ = camera;
   this.material_ = material;
@@ -331,11 +335,17 @@ function CubeShooter(scene, camera, material, clickDistance, centerPoint, radius
   this.angle_ = 0;
   this.radius_ = radius;
   this.startDirectionNormalized_ = new THREE.Vector3();
+
   this.target_ = new THREE.Vector3();
+  this.targetRadius_ = radius;
+
+  this.radiusUpdateRate_ = 0.7;
+//  this.angleScaleFactor_ = 0.01;
+  this.angleScaleFactor_ = 1.0;
 
   this.projector_ = new THREE.Projector();
 
-  this.cube_ = new CubeWithTrail(material);
+  this.cube_ = new CubeWithTrail(material, cubeSize);
   this.cube_.addToScene(scene);
 }
 
@@ -360,11 +370,15 @@ CubeShooter.prototype.mouseMove = function(x, y) {
 
 CubeShooter.prototype.mouseUp = function() {
   // Choose random axis
-  this.axis_.set(Math.random(), Math.random(), Math.random());
+  this.axis_.set(2 * Math.random() - 1,
+                 2 * Math.random() - 1,
+                 2 * Math.random() - 1);
   this.axis_.normalize();
 
   // Choose random starting direction in the 2D plane orthogonal to the axis.
-  this.startDirectionNormalized_.set(Math.random(), Math.random(), Math.random());
+  this.startDirectionNormalized_.set(2 * Math.random() - 1,
+                                     2 * Math.random() - 1,
+                                     2 * Math.random() - 1);
   
   // Make starting point conform to radius on plane.
   // There has got to be a simpler way to compute this.
@@ -375,10 +389,20 @@ CubeShooter.prototype.mouseUp = function() {
   this.startDirectionNormalized_.normalize();
 };
 
+CubeShooter.prototype.setTargetRadius = function(targetRadius) {
+  this.targetRadius_ = targetRadius;
+}
+
 CubeShooter.prototype.update = function(time) {
   // FIXME: add in audio, make the angle update faster with higher volume
-  this.angle_ += 0.01 * time;
 
+  // This integration was an accident, but actually looks kind of cool
+  // this.angle_ += this.angleScaleFactor_ * time;
+
+  this.angle_ = this.angleScaleFactor_ * time;
+
+  this.radius_ = (this.targetRadius_ * this.radiusUpdateRate_ +
+                  this.radius_ * (1.0 - this.radiusUpdateRate_));
   this.target_.copy(this.startDirectionNormalized_);
   this.target_.multiplyScalar(this.radius_);
   this.target_.applyAxisAngle(this.axis_, this.angle_);
@@ -396,7 +420,8 @@ var activeShooters = [];
 var currentShooter;
 
 function onMouseDown(event) {
-  currentShooter = new CubeShooter(scene, camera, material, 100.0, new THREE.Vector3(0.0, 0.0, 0.0), 50);
+  currentShooter = new CubeShooter(scene, camera, material, 100.0, new THREE.Vector3(0.0, 0.0, 0.0), 10, 50);
+  onMouseMove(event);
 }
 
 function onMouseMove(event) {
@@ -426,6 +451,7 @@ function init() {
   camera = new THREE.PerspectiveCamera( 30, window.innerWidth / window.innerHeight, 1, 500 );
   camera.position.y = 30;
   camera.position.z = 200;
+  camera.lookAt(new THREE.Vector3(0, 0, 0));
 
   scene = new THREE.Scene();
   scene.add(camera);
@@ -505,6 +531,9 @@ var firstTime = true;
 
 var startTime;
 
+var frameCount = 0;
+
+var targetRadius = 50;
 
 function render() {
 
@@ -513,6 +542,11 @@ function render() {
   }
 
   var time = Date.now() * 0.001 - startTime;
+
+//  if (++frameCount == 50) {
+//    targetRadius += 2;
+//    frameCount = 0;
+//  }
 
 //  var cubeRadius = 50;
 //  var cubePosition = new THREE.Vector3(cubeRadius * Math.sin(time / 2),
@@ -523,9 +557,13 @@ function render() {
 //  controls.update();
 
   for (var ii = 0; ii < activeShooters.length; ++ii) {
+    activeShooters[ii].setTargetRadius(targetRadius);
     activeShooters[ii].update(time);
   }
 
+  if (frameCount == 50) {
+    frameCount = 0;
+  }
 
   renderer.render( scene, camera );
 }
