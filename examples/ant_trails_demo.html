@@ -196,7 +196,13 @@ function CubeWithTrail(material, cubeSize) {
 
 CubeWithTrail.prototype.setCubeSize = function(cubeSize) {
   this.cubeMesh.scale = new THREE.Vector3(cubeSize, cubeSize, cubeSize);
-}
+};
+
+// This rotation only applies as long as the cube isn't chasing a
+// target.
+CubeWithTrail.prototype.setRotationFromQuaternion = function(quaternion) {
+  this.cubeMesh.setRotationFromQuaternion(quaternion);
+};
 
 CubeWithTrail.prototype.chaseTarget = function(target) {
   var temp = new THREE.Vector3();
@@ -359,6 +365,10 @@ function CubeShooter(scene, camera, material, clickDistance, centerPoint, cubeSi
   this.cube_ = new CubeWithTrail(material, cubeSize);
   this.cube_.addToScene(scene);
 }
+
+CubeShooter.prototype.setRotationFromQuaternion = function(quaternion) {
+  this.cube_.setRotationFromQuaternion(quaternion);
+};
 
 // x and y are in normalized device coordinates: (-1..1) in x, (1.0..-1.0) in y
 CubeShooter.prototype.mouseMove = function(x, y) {
@@ -565,6 +575,14 @@ function render() {
 //  controls.update();
 
   ++frameCount;
+
+  // Spin the current shooter madly
+  if (currentShooter) {
+    var randomRotation = new THREE.Euler(2 * Math.PI * Math.random(),
+                                         2 * Math.PI * Math.random(),
+                                         2 * Math.PI * Math.random());
+    currentShooter.setRotationFromQuaternion(new THREE.Quaternion().setFromEuler(randomRotation));
+  }
 
   for (var ii = 0; ii < activeShooters.length; ++ii) {
     if (frameCount == 30) {
