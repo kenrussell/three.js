@@ -56,6 +56,8 @@ var positions, colors, normals;
 
 var cube;
 
+var EPSILON = 0.001;
+
 function CubeWithTrail(material) {
   this.cubeSize_ = 10;
   this.cubeGeometry = new THREE.CubeGeometry(this.cubeSize_, this.cubeSize_, this.cubeSize_);
@@ -175,7 +177,54 @@ function CubeWithTrail(material) {
   fillWithVectors(this.oldRingVertices_);
   fillWithVectors(this.newRingVertices_);
   fillWithVectors(this.ringNormals_);
+
+  // Tracking state.
+  this.heading_ = new THREE.Vector3();
+  this.up_ = new THREE.Vector3(0, 1, 0);
+  // How quickly the cube moves forward along the heading (0..1).
+  this.velocity_ = 0.2;
+  // How quickly the cube interpolates toward the target (0..1).
+  this.trackingRate_ = 0.5;
 }
+
+CubeWithTrail.prototype.chaseTarget = function(target) {
+  var temp = new THREE.Vector3();
+  temp.subVectors(target, this.cubeMesh.position);
+  if (temp.length() < EPSILON) {
+    // Too little motion to work with -- just update the cube's position.
+    this.cubeMesh.position.copy(target);
+    return;
+  }
+  temp.normalize();
+  temp.lerp(this.heading_, 1.0 - this.trackingRate_);
+  if (temp.length() < EPSILON) {
+    // Too fast motion? Choose target's direction as new heading.
+    this.heading_.subVectors(target, this.cubeMesh.position);
+    this.heading_.normalize();
+  } else {
+    temp.normalize();
+    this.heading_.copy(temp);
+  }
+
+  // Stateful updating of the up vector.
+  temp.crossVectors(this.heading_, this.up_);
+  this.up_.crossVectors(temp, this.heading_);
+  if (this.up_.length() < EPSILON) {
+    // FIXME: HACK: figure out whether this is right.
+    this.up_.set(this.heading_.z, -this.heading_.x, 0);
+  }
+  this.up_.normalize();
+
+  this.cubeMesh.position.lerp(target, this.velocity_);
+
+  temp.addVectors(this.cubeMesh.position, this.heading_);
+
+  var lookAt = new THREE.Matrix4();
+  lookAt.lookAt(this.cubeMesh.position, temp, this.up_);
+  this.cubeMesh.setRotationFromMatrix(lookAt);
+
+  this.moveCubeLeavingTrail();
+};
 
 CubeWithTrail.prototype.addRing = function() {
   var positions = this.trailGeometry.attributes.position.array;
@@ -221,21 +270,15 @@ CubeWithTrail.prototype.addRing = function() {
 CubeWithTrail.prototype.addToScene = function(scene) {
   scene.add(this.cubeMesh);
   scene.add(this.trailMesh);
-}
+};
 
-CubeWithTrail.prototype.setCubePosition = function(newPosition) {
-  this.cubeMesh.position.copy(newPosition);
-}
-
-CubeWithTrail.prototype.moveCubeLeavingTrail = function(newPosition) {
+CubeWithTrail.prototype.moveCubeLeavingTrail = function(newPosition, newRotation) {
   for (var ii = 0; ii < this.oldRingVertices_.length; ++ii) {
     this.oldRingVertices_[ii].copy(this.newRingVertices_[ii]);
   }
 
   var positions = this.trailGeometry.attributes.position.array;
   var normals = this.trailGeometry.attributes.normal.array;
-
-  this.setCubePosition(newPosition);
 
   this.cubeMesh.updateMatrixWorld();
   var worldMatrix = this.cubeMesh.matrixWorld;
@@ -266,7 +309,7 @@ CubeWithTrail.prototype.moveCubeLeavingTrail = function(newPosition) {
   this.trailGeometry.computeBoundingSphere();
   this.trailGeometry.attributes.position.needsUpdate = true;
   this.trailGeometry.attributes.normal.needsUpdate = true;
-}
+};
 
 function init() {
 
@@ -354,29 +397,11 @@ function render() {
 
   var time = Date.now() * 0.001;
 
-//  mesh.rotation.x = time * 0.25;
-//  mesh.rotation.y = time * 0.5;
-
-  /*
-  var radius = 20;
-  camera.position.x = radius * Math.sin(time * 4);
-  camera.position.y = radius * Math.cos(time * 4);
-  camera.position.z = 200;
-  */
-//  camera.position.y = 30;
-//  camera.position.z = 200;
-//  camera.lookAt(scene.position);
-
   var cubeRadius = 50;
   var cubePosition = new THREE.Vector3(cubeRadius * Math.sin(time / 2),
                                        30 * Math.sin(time / 10),
                                        cubeRadius * -1 * Math.cos(time / 2));
-  if (firstTime) {
-    cube.setCubePosition(cubePosition);
-  } else {
-    cube.moveCubeLeavingTrail(cubePosition);
-  }
-  firstTime = false;
+  cube.chaseTarget(cubePosition);
 
   controls.update();
   renderer.render( scene, camera );
