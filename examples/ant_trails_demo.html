@@ -58,6 +58,8 @@ var cube;
 
 var EPSILON = 0.001;
 
+var TRAIL_LENGTH_IN_INDICES = 5000;  // Was 65535, or maximum length
+
 //----------------------------------------------------------------------
 // CubeWithTrail
 //
@@ -88,7 +90,7 @@ function CubeWithTrail(material, cubeSize) {
   // distinct normals per vertex.
   var numIndicesPerRing = 4 * 2 * 2;
 
-  var numRings = Math.floor(65535 / numIndicesPerRing);
+  var numRings = Math.floor(TRAIL_LENGTH_IN_INDICES / numIndicesPerRing);
 
   var numElements = numRings * numElementsPerRing;
   var numVertices = numRings * numIndicesPerRing;
