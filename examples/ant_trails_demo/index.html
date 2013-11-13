@@ -351,7 +351,7 @@ CubeWithTrail.prototype.moveCubeLeavingTrail = function() {
 // CubeShooter
 //
 
-function CubeShooter(scene, camera, clickDistance, centerPoint, cubeSize) {
+function CubeShooter(scene, camera, clickDistance, centerPoint, cubeSize, touchIdentifier) {
   this.scene_ = scene;
   this.camera_ = camera;
   this.clickDistance_ = clickDistance;
@@ -361,6 +361,7 @@ function CubeShooter(scene, camera, clickDistance, centerPoint, cubeSize) {
   this.angle_ = 0;
   this.radius_ = START_RADIUS;
   this.startDirectionNormalized_ = new THREE.Vector3();
+  this.touchIdentifier_ = touchIdentifier;
 
   this.target_ = new THREE.Vector3();
 
@@ -401,6 +402,10 @@ CubeShooter.prototype.mouseMove = function(x, y) {
   
   // Move the cube
   this.cube_.setPosition(mouse3D);
+};
+
+CubeShooter.prototype.touchIdentifier = function() {
+  return this.touchIdentifier_;
 };
 
 CubeShooter.prototype.mouseUp = function(time) {
@@ -494,15 +499,36 @@ CubeShooter.prototype.removeFromScene = function(scene) {
 // Event handlers
 //
 
+// The cubes about to be shot
+var cubesToShoot = [];
+
+// The cubes which have already been shot
 var activeShooters = [];
-var currentShooter;
 
 function onMouseDown(event) {
-  currentShooter = new CubeShooter(scene, camera, 100.0, new THREE.Vector3(0.0, 0.0, 0.0), SPINNING_CUBE_SIZE, 50);
+  var touchIdentifier = 0;
+  if ('identifier' in event)
+    touchIdentifier = event.identifier;
+  cubesToShoot.push(new CubeShooter(scene, camera, 100.0, new THREE.Vector3(0.0, 0.0, 0.0), SPINNING_CUBE_SIZE, 50, touchIdentifier));
   onMouseMove(event);
 }
 
 function onMouseMove(event) {
+  if (cubesToShoot.length == 0)
+    return;
+
+  var currentShooter;
+  if ('identifier' in event) {
+    for (var ii = 0; ii < cubesToShoot.length; ++ii) {
+      if (cubesToShoot[ii].touchIdentifier() == event.identifier) {
+        currentShooter = cubesToShoot[ii];
+        break;
+      }
+    }
+  } else {
+    currentShooter = cubesToShoot[0];
+  }
+
   if (!currentShooter)
     return;
 
@@ -511,12 +537,44 @@ function onMouseMove(event) {
 }
 
 function onMouseUp(event) {
-  if (!currentShooter)
+  if (cubesToShoot.length == 0)
     return;
+
+  var currentShooter;
+  if ('identifier' in event) {
+    for (var ii = 0; ii < cubesToShoot.length; ++ii) {
+      if (cubesToShoot[ii].touchIdentifier == event.identifier) {
+        currentShooter = cubesToShoot.splice(ii, 1)[0];
+        break;
+      }
+    }
+  } else {
+    currentShooter = cubesToShoot.splice(0, 1)[0];
+  }
 
   currentShooter.mouseUp(currentTime());
   activeShooters.push(currentShooter);
-  currentShooter = null;
+}
+
+function onTouchStart(event) {
+  for (var ii = 0; ii < event.changedTouches.length; ++ii) {
+    onMouseDown(event.changedTouches.item(ii));
+  }
+  event.preventDefault();
+}
+
+function onTouchMove(event) {
+  for (var ii = 0; ii < event.changedTouches.length; ++ii) {
+    onMouseMove(event.changedTouches.item(ii));
+  }
+  event.preventDefault();
+}
+
+function onTouchEnd(event) {
+  for (var ii = 0; ii < event.changedTouches.length; ++ii) {
+    onMouseUp(event.changedTouches.item(ii));
+  }
+  event.preventDefault();
 }
 
 //----------------------------------------------------------------------
@@ -819,6 +877,10 @@ function init() {
   renderer.domElement.addEventListener('mousedown', onMouseDown, false);
   renderer.domElement.addEventListener('mousemove', onMouseMove, false);
   renderer.domElement.addEventListener('mouseup', onMouseUp, false);
+  renderer.domElement.addEventListener('touchstart', onTouchStart, false);
+  renderer.domElement.addEventListener('touchmove', onTouchMove, false);
+  renderer.domElement.addEventListener('touchend', onTouchEnd, false);
+  renderer.domElement.addEventListener('touchcancel', onTouchEnd, false);
 }
 
 function onWindowResize() {
@@ -868,12 +930,12 @@ function render() {
 
   updateTime();
 
-  // Spin the current shooter madly
-  if (currentShooter) {
+  // Spin madly the cubes to be shot
+  for (var ii = 0; ii < cubesToShoot.length; ++ii) {
     var randomRotation = new THREE.Euler(2 * Math.PI * Math.random(),
                                          2 * Math.PI * Math.random(),
                                          2 * Math.PI * Math.random());
-    currentShooter.setRotationFromQuaternion(new THREE.Quaternion().setFromEuler(randomRotation));
+    cubesToShoot[ii].setRotationFromQuaternion(new THREE.Quaternion().setFromEuler(randomRotation));
   }
 
   var ii = 0;
