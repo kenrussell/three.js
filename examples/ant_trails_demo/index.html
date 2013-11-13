@@ -373,8 +373,12 @@ function CubeShooter(scene, camera, clickDistance, centerPoint, cubeSize, touchI
   this.startTime_ = 0;
 
   // Pick next "random" sound
-  this.soundId_ = randomizedArray[nextSoundIndex];
-  nextSoundIndex = (nextSoundIndex + 1) % randomizedArray.length;
+  this.soundId_ = 0;
+  if (audioLoaded) {
+    this.soundId_ = randomizedArray[nextSoundIndex];
+    nextSoundIndex = (nextSoundIndex + 1) % randomizedArray.length;
+  }
+
   this.material_ = materials[this.soundId_];
 
   this.cube_ = new CubeWithTrail(this.material_, cubeSize);
