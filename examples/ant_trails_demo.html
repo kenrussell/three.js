@@ -60,6 +60,8 @@ var EPSILON = 0.001;
 
 var TRAIL_LENGTH_IN_INDICES = 5000;  // Was 65535, or maximum length
 
+var BASE_CUBE_SIZE = 3;
+
 //----------------------------------------------------------------------
 // CubeWithTrail
 //
@@ -445,7 +447,7 @@ var activeShooters = [];
 var currentShooter;
 
 function onMouseDown(event) {
-  currentShooter = new CubeShooter(scene, camera, material, 100.0, new THREE.Vector3(0.0, 0.0, 0.0), 10, 50);
+  currentShooter = new CubeShooter(scene, camera, material, 100.0, new THREE.Vector3(0.0, 0.0, 0.0), BASE_CUBE_SIZE, 50);
   onMouseMove(event);
 }
 
@@ -586,7 +588,7 @@ function render() {
 
   for (var ii = 0; ii < activeShooters.length; ++ii) {
     if (frameCount == 30) {
-      activeShooters[ii].setCubeSize(10 + 5 * (Math.random() - 0.5));
+      activeShooters[ii].setCubeSize(BASE_CUBE_SIZE + 0.5 * BASE_CUBE_SIZE * (Math.random() - 0.5));
     }
 
     activeShooters[ii].update(time);
