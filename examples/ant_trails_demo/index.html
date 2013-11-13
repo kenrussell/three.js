@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <title>trails</title>
+    <title>aNt - trails</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
     <style>
@@ -32,7 +32,7 @@
   <body>
 
     <div id="container"></div>
-    <div id="info">trails</div>
+    <div id="info"><a href="https://twitter.com/ant_innit">aNt</a> - trails</div>
 
     <script src="../../build/three.min.js"></script>
 
@@ -439,19 +439,30 @@ CubeShooter.prototype.update = function(time) {
   var audioVolume = getAverageVolume(this.soundId_);
   this.cube_.setCubeSize(BASE_CUBE_SIZE + audioVolume / AUDIO_DIVISOR);
 
-  // FIXME: add in audio, make the angle update faster with higher volume
+  // FIXME: try making the angle update faster with higher volume.
+  // Need to figure out proper delta-T and integration.
 
   // This integration was an accident, but actually looks kind of cool
   // this.angle_ += this.angleScaleFactor_ * time;
 
   this.angle_ = this.angleScaleFactor_ * time;
 
-//  this.radius_ = (this.targetRadius_ * this.radiusUpdateRate_ +
-//                  this.radius_ * (1.0 - this.radiusUpdateRate_));
   var lifetimeFraction = (time - this.startTime_) / CUBE_LIFETIME;
   if (lifetimeFraction > 1) {
-    mute(this.soundId_, true);
     this.cube_.removeFromScene(this.scene_);
+
+    // See whether we should really mute ourselves
+    var stillAlive = false;
+    for (var ii = 0; ii < activeShooters.length; ++ii) {
+      if (activeShooters[ii] !== this &&
+          activeShooters[ii].soundId_ == this.soundId_) {
+        stillAlive = true;
+        break;
+      }
+    }
+    if (!stillAlive) {
+      mute(this.soundId_, true);
+    }
     return false;
   }
 
@@ -464,6 +475,10 @@ CubeShooter.prototype.update = function(time) {
   this.target_.add(this.centerPoint_);
 
   this.cube_.chaseTarget(this.target_);
+
+  var pos = this.cube_.cubeMesh.position;
+  positionSource(this.soundId_, pos.x, pos.y, pos.z);
+
   return true;
 };
 
@@ -568,9 +583,11 @@ function innit() {
   materials = [];
   for (var ii = 0; ii < samples.length - 1; ++ii) {
     var color = new THREE.Color();
-    color.r = color.g = color.b = 0.2 + (0.6 * ii / samples.length);
+    color.r = color.g = color.b = 0.5 + (0.4 * ii / samples.length);
     materials.push(new THREE.MeshPhongMaterial( {
       color: color, ambient: color, specular: 'rgb(80%,80%,100%)',
+      opacity: 0.3,
+      transparent: true,
       shininess: 250,
       side: THREE.DoubleSide
     } ));
@@ -615,6 +632,7 @@ function audioBufferLoaded(bufferList) {
 
     sound.panner = audioContext.createPanner();
     sound.panner.setPosition(0, 0, 0);
+    sound.panner.refDistance = 30;
 
     sound.gain = audioContext.createGain();
     sound.gain.gain.value = 0;
