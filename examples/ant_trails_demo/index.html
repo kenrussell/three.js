@@ -20,6 +20,14 @@
       position: absolute;
       top: 0px; width: 100%;
       padding: 5px;
+      z-index: 2;
+      }
+
+      #fullscreen {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      z-index: 3;
       }
 
       a {
@@ -33,6 +41,7 @@
 
     <div id="container"></div>
     <div id="info">trails - <a href="https://twitter.com/ant_innit">aNt</a> and <a href="https://twitter.com/gfxprogrammer">ken</a></div>
+    <button id="fullscreen">Fullscreen</button>
 
     <script src="../../build/three.min.js"></script>
 
@@ -891,6 +900,31 @@ function init() {
   renderer.domElement.addEventListener('touchmove', onTouchMove, false);
   renderer.domElement.addEventListener('touchend', onTouchEnd, false);
   renderer.domElement.addEventListener('touchcancel', onTouchEnd, false);
+
+  // Fullscreen button
+
+  var fullscreenBtn = document.getElementById('fullscreen');
+  if(document.fullscreenEnabled || document.webkitFullscreenEnabled || document.mozFullScreenEnabled) {
+      fullscreenBtn.addEventListener("click", function() {
+          if(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullscreenElement) {
+            if (document.cancelFullScreen)
+              document.cancelFullScreen();
+            else if (document.webkitCancelFullScreen)
+              document.webkitCancelFullScreen();
+            else if (document.mozCancelFullScreen)
+              document.mozCancelFullScreen();
+          } else {
+            if (container.requestFullScreen)
+              container.requestFullScreen();
+            else if (container.webkitRequestFullScreen)
+              container.webkitRequestFullScreen(Element.ALLOW_KEYBOARD_INPUT);
+            else if (container.mozRequestFullScreen)
+              container.mozRequestFullScreen();
+          }
+      });
+  } else {
+      fullscreenBtn.parentElement.removeChild(fullscreenBtn);
+  }
 }
 
 function onWindowResize() {
