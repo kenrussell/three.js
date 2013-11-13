@@ -509,7 +509,7 @@ function onMouseDown(event) {
   var touchIdentifier = 0;
   if ('identifier' in event)
     touchIdentifier = event.identifier;
-  cubesToShoot.push(new CubeShooter(scene, camera, 100.0, new THREE.Vector3(0.0, 0.0, 0.0), SPINNING_CUBE_SIZE, 50, touchIdentifier));
+  cubesToShoot.push(new CubeShooter(scene, camera, 100.0, new THREE.Vector3(0.0, 0.0, 0.0), SPINNING_CUBE_SIZE, touchIdentifier));
   onMouseMove(event);
 }
 
@@ -543,13 +543,19 @@ function onMouseUp(event) {
   var currentShooter;
   if ('identifier' in event) {
     for (var ii = 0; ii < cubesToShoot.length; ++ii) {
-      if (cubesToShoot[ii].touchIdentifier == event.identifier) {
+      if (cubesToShoot[ii].touchIdentifier() == event.identifier) {
         currentShooter = cubesToShoot.splice(ii, 1)[0];
         break;
       }
     }
   } else {
     currentShooter = cubesToShoot.splice(0, 1)[0];
+  }
+
+  if (!currentShooter) {
+    console.log("ERROR: did not find cube shooter associated with either identifier " +
+                event.identifier + " or index 0");
+    return;
   }
 
   currentShooter.mouseUp(currentTime());
