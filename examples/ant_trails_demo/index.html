@@ -58,9 +58,16 @@ var cube;
 
 var EPSILON = 0.001;
 
-var TRAIL_LENGTH_IN_INDICES = 5000;  // Was 65535, or maximum length
+var TRAIL_LENGTH_IN_INDICES = 1000;  // Was 65535, or maximum length
 
-var BASE_CUBE_SIZE = 3;
+var BASE_CUBE_SIZE = 0.2;
+
+var AUDIO_DIVISOR = 6;
+
+var CUBE_LIFETIME = 10; // seconds
+
+var START_RADIUS = 10;
+var END_RADIUS = 100;
 
 //----------------------------------------------------------------------
 // CubeWithTrail
@@ -343,28 +350,32 @@ CubeWithTrail.prototype.moveCubeLeavingTrail = function() {
 // CubeShooter
 //
 
-function CubeShooter(scene, camera, material, clickDistance, centerPoint, cubeSize, radius) {
+function CubeShooter(scene, camera, clickDistance, centerPoint, cubeSize) {
   this.scene_ = scene;
   this.camera_ = camera;
-  this.material_ = material;
   this.clickDistance_ = clickDistance;
   this.centerPoint_ = new THREE.Vector3();
   this.centerPoint_.copy(centerPoint);
   this.axis_ = new THREE.Vector3();
   this.angle_ = 0;
-  this.radius_ = radius;
+  this.radius_ = START_RADIUS;
   this.startDirectionNormalized_ = new THREE.Vector3();
 
   this.target_ = new THREE.Vector3();
-  this.targetRadius_ = radius;
 
-  this.radiusUpdateRate_ = 0.7;
 //  this.angleScaleFactor_ = 0.01;
-  this.angleScaleFactor_ = 1.0;
+  this.angleScaleFactor_ = 3.0;
 
   this.projector_ = new THREE.Projector();
 
-  this.cube_ = new CubeWithTrail(material, cubeSize);
+  this.startTime_ = 0;
+
+  // Pick next "random" sound
+  this.soundId_ = randomizedArray[nextSoundIndex];
+  nextSoundIndex = (nextSoundIndex + 1) % randomizedArray.length;
+  this.material_ = materials[this.soundId_];
+
+  this.cube_ = new CubeWithTrail(this.material_, cubeSize);
   this.cube_.addToScene(scene);
 }
 
@@ -391,7 +402,11 @@ CubeShooter.prototype.mouseMove = function(x, y) {
   this.cube_.setPosition(mouse3D);
 };
 
-CubeShooter.prototype.mouseUp = function() {
+CubeShooter.prototype.mouseUp = function(time) {
+  this.startTime_ = time;
+
+  mute(this.soundId_, false);
+
   // Choose random axis
   this.axis_.set(2 * Math.random() - 1,
                  2 * Math.random() - 1,
@@ -421,6 +436,9 @@ CubeShooter.prototype.setCubeSize = function(cubeSize) {
 };
 
 CubeShooter.prototype.update = function(time) {
+  var audioVolume = getAverageVolume(this.soundId_);
+  this.cube_.setCubeSize(BASE_CUBE_SIZE + audioVolume / AUDIO_DIVISOR);
+
   // FIXME: add in audio, make the angle update faster with higher volume
 
   // This integration was an accident, but actually looks kind of cool
@@ -428,14 +446,25 @@ CubeShooter.prototype.update = function(time) {
 
   this.angle_ = this.angleScaleFactor_ * time;
 
-  this.radius_ = (this.targetRadius_ * this.radiusUpdateRate_ +
-                  this.radius_ * (1.0 - this.radiusUpdateRate_));
+//  this.radius_ = (this.targetRadius_ * this.radiusUpdateRate_ +
+//                  this.radius_ * (1.0 - this.radiusUpdateRate_));
+  var lifetimeFraction = (time - this.startTime_) / CUBE_LIFETIME;
+  if (lifetimeFraction > 1) {
+    mute(this.soundId_, true);
+    this.cube_.removeFromScene(this.scene_);
+    return false;
+  }
+
+  this.radius_ = (START_RADIUS * (1.0 - lifetimeFraction) +
+                  END_RADIUS * lifetimeFraction);
+
   this.target_.copy(this.startDirectionNormalized_);
   this.target_.multiplyScalar(this.radius_);
   this.target_.applyAxisAngle(this.axis_, this.angle_);
   this.target_.add(this.centerPoint_);
 
   this.cube_.chaseTarget(this.target_);
+  return true;
 };
 
 
@@ -443,11 +472,15 @@ CubeShooter.prototype.removeFromScene = function(scene) {
   this.cube_.removeFromScene(scene);
 };
 
+//----------------------------------------------------------------------
+// Event handlers
+//
+
 var activeShooters = [];
 var currentShooter;
 
 function onMouseDown(event) {
-  currentShooter = new CubeShooter(scene, camera, material, 100.0, new THREE.Vector3(0.0, 0.0, 0.0), BASE_CUBE_SIZE, 50);
+  currentShooter = new CubeShooter(scene, camera, 100.0, new THREE.Vector3(0.0, 0.0, 0.0), BASE_CUBE_SIZE, 50);
   onMouseMove(event);
 }
 
@@ -463,12 +496,245 @@ function onMouseUp(event) {
   if (!currentShooter)
     return;
 
-  currentShooter.mouseUp();
+  currentShooter.mouseUp(currentTime());
   activeShooters.push(currentShooter);
   currentShooter = null;
 }
 
+//----------------------------------------------------------------------
+// BufferLoader
+//
+
+function BufferLoader(context, urlList, callback) {
+  this.context = context;
+  this.urlList = urlList;
+  this.onload = callback;
+  this.bufferList = new Array();
+  this.loadCount = 0;
+}
+
+BufferLoader.prototype.loadBuffer = function(url, index) {
+  // Load buffer asynchronously
+  var request = new XMLHttpRequest();
+  request.open("GET", url, true);
+  request.responseType = "arraybuffer";
+
+  var loader = this;
+
+  request.onload = function() {
+    // Asynchronously decode the audio file data in request.response
+    loader.context.decodeAudioData(
+      request.response,
+      function(buffer) {
+        if (!buffer) {
+          alert('error decoding file data: ' + url);
+          return;
+        }
+        loader.bufferList[index] = buffer;
+        if (++loader.loadCount == loader.urlList.length)
+          loader.onload(loader.bufferList);
+      }
+    );
+  }
+
+  request.onerror = function() {
+    alert('BufferLoader: XHR error');
+  }
+
+  request.send();
+}
+
+BufferLoader.prototype.load = function() {
+  for (var i = 0; i < this.urlList.length; ++i)
+  this.loadBuffer(this.urlList[i], i);
+}
+
+//----------------------------------------------------------------------
+// Audio
+//
+
+var audioContext, bufferLoader, bufferedList, sourceList, audioMixer;
+var audioLoaded = false;
+var samples = [	"snd/000.wav", "snd/001.wav", "snd/002.wav", 
+				"snd/003.wav", "snd/004.wav", "snd/005.wav", 
+				"snd/006.wav", "snd/007.wav", "snd/008.wav",
+		 		"snd/009.wav", "snd/010.wav", "snd/011.wav"];
+var materials;
+
+var randomizedArray;
+var nextSoundIndex = 0;
+
+function innit() {
+  materials = [];
+  for (var ii = 0; ii < samples.length - 1; ++ii) {
+    var color = new THREE.Color();
+    color.r = color.g = color.b = 0.2 + (0.6 * ii / samples.length);
+    materials.push(new THREE.MeshPhongMaterial( {
+      color: color, ambient: color, specular: 'rgb(80%,80%,100%)',
+      shininess: 250,
+      side: THREE.DoubleSide
+    } ));
+  }
+
+  materials.push(new THREE.MeshPhongMaterial( {
+    color: 0xff0000, ambient: 0xff0000, specular: 'rgb(80%,80%,100%)',
+    shininess: 250,
+    side: THREE.DoubleSide
+  } ));
+  
+  loadAudio();
+  listenerPostion(0, 0, 0);
+}
+
+function listenerPostion(x, y, z) {
+  audioContext.listener.setPosition(x, y, z);
+}
+
+function loadAudio() {
+  audioContext = new webkitAudioContext();
+  audioMixer = audioContext.createGain();
+  audioMixer.connect(audioContext.destination);
+
+  bufferLoader = new BufferLoader(audioContext, samples, audioBufferLoaded);
+  bufferLoader.load();
+}
+
+function audioBufferLoaded(bufferList) {
+  bufferedList = bufferList;
+  sourceList = [];
+  
+  for(var i = 0; i < samples.length; i++) {
+    var sound = new Object();
+    sound.source = audioContext.createBufferSource();
+    sound.source.buffer = bufferedList[i];
+    sound.source.loop = true;
+    
+    sound.analyser = audioContext.createAnalyser();
+    sound.analyser.fftSize = 1024;
+    sound.freqData = new Uint8Array(sound.analyser.frequencyBinCount);
+
+    sound.panner = audioContext.createPanner();
+    sound.panner.setPosition(0, 0, 0);
+
+    sound.gain = audioContext.createGain();
+    sound.gain.gain.value = 0;
+
+    sound.source.connect(sound.analyser);
+    sound.analyser.connect(sound.panner);
+    sound.panner.connect(sound.gain);
+    sound.gain.connect(audioMixer);
+
+    sourceList[i] = sound;
+  }
+
+  randomizedArray = new Array(sourceList.length);
+  for (var i = 0; i < randomizedArray.length; ++i) {
+    randomizedArray[i] = i;
+  }
+  // Knuth card shuffle
+  for (var i = randomizedArray.length - 1; i > 0; --i) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var t = randomizedArray[i];
+    randomizedArray[i] = randomizedArray[j];
+    randomizedArray[j] = t;
+  }
+
+  audioLoaded = true;
+  playAll();
+
+  /*
+	// examples
+	mute(4, false); // unmute sample 1
+	setVolume(0, 0.2) // set the volume of sample 3 to 0.2
+
+	// get the current levelmeter of sample 1
+	updateAnaliserData(1); // sample 1
+	var audioMeter = getAverageVolume(1); // sample 1 freqDate to avarage.
+
+	positionSource(1, 5.0, 1.0, 3.0); // 3d positioning
+
+	// startSource(4); // start playing a sample
+	// stopSource(4);	// stop playing a sample
+
+	// id = sample, dt = secondsSinceLastFrame, lastPos of cube, nextPos = where it'll be nextframe
+	// forget this, it'll blow the systems audio output- proably not doing it correctly anyway.
+	// setDopplerShift(1, 0.1, [0, 0, 0], [1, 0, 0]);
+  */
+}
+
+function playAll() {
+  for(var i = 0; i < samples.length; i++) {
+    startSource(i);
+    positionSource(i, 0, 0, 0);
+  }
+}
+
+// these could be inside the object
+function updateSound() {
+  if (audioLoaded) {
+    for(var i = 0; i < sourceList.length; i++) {
+      updateAnaliserData(i);
+    }
+  }
+}
+
+function startSource(id) {
+  if(audioLoaded) sourceList[id].source.start(0);
+}
+
+function stopSource(id) {
+  if(audioLoaded) sourceList[id].source.stop(0);
+}
+
+function mute(id, mute) {
+  if(audioLoaded) {
+    if(mute) {
+      sourceList[id].gain.gain.value = 0;
+    } else {
+      sourceList[id].gain.gain.value = 1;
+    }
+  }
+}
+
+function setVolume(id, vol) {
+  if(audioLoaded) sourceList[id].gain.gain.value = vol;
+}
+
+function positionSource(id, x, y, z) {
+  if(audioLoaded) sourceList[id].panner.setPosition(x, y, z);
+}
+
+function setDopplerShift(id, dt, lastPos, nextPos) {
+  var px = lastPos.x, py = lastPos.y, pz = lastPos.z;
+  var dx = nextPos.x-px, dy = nextPos.y-py, dz = nextPos.z-pz;
+
+  sourceList[id].panner.setPosition(nextPos.x, nextPos.y, nextPos.z);
+  sourceList[id].panner.setVelocity(dx/dt, dy/dt, dz/dt);
+}
+
+function getAverageVolume(id) {
+  if (!audioLoaded)
+    return 0;
+
+  var values = 0;
+  var average;
+  var length = sourceList[id].freqData.length;
+  for (var i = 0; i < length; i++){values += sourceList[id].freqData[i]};
+  average = values / length;
+  return average;
+}
+
+function updateAnaliserData(id) {
+  if(sourceList[id].analyser != undefined) {
+    sourceList[id].analyser.smoothingTimeConstant = 0.1;
+    sourceList[id].analyser.getByteFrequencyData(sourceList[id].freqData);
+  }
+}
+
+
 function init() {
+
+  innit();
 
   container = document.getElementById( 'container' );
 
@@ -554,19 +820,22 @@ function animate() {
 
 }
 
-var firstTime = true;
-
 var startTime;
+var time_;
 
-var frameCount = 0;
-
-function render() {
-
+function updateTime() {
   if (startTime === undefined) {
     startTime = Date.now();
   }
 
-  var time = 0.001 * (Date.now() - startTime);
+  time_ = 0.001 * (Date.now() - startTime);
+}
+
+function currentTime() {
+  return time_;
+}
+
+function render() {
 
 //  var cubeRadius = 50;
 //  var cubePosition = new THREE.Vector3(cubeRadius * Math.sin(time / 2),
@@ -576,7 +845,7 @@ function render() {
 
 //  controls.update();
 
-  ++frameCount;
+  updateTime();
 
   // Spin the current shooter madly
   if (currentShooter) {
@@ -586,17 +855,16 @@ function render() {
     currentShooter.setRotationFromQuaternion(new THREE.Quaternion().setFromEuler(randomRotation));
   }
 
-  for (var ii = 0; ii < activeShooters.length; ++ii) {
-    if (frameCount == 30) {
-      activeShooters[ii].setCubeSize(BASE_CUBE_SIZE + 0.5 * BASE_CUBE_SIZE * (Math.random() - 0.5));
+  var ii = 0;
+  while (ii < activeShooters.length) {
+    if (activeShooters[ii].update(time_)) {
+      ++ii;
+    } else {
+      activeShooters.splice(ii, 1);
     }
-
-    activeShooters[ii].update(time);
   }
 
-  if (frameCount == 30) {
-    frameCount = 0;
-  }
+  updateSound();
 
   renderer.render( scene, camera );
 }
