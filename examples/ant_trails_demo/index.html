@@ -688,7 +688,15 @@ function listenerPostion(x, y, z) {
 }
 
 function loadAudio() {
-  audioContext = new webkitAudioContext();
+  if (window.AudioContext) {
+    audioContext = new AudioContext();
+  } else if (window.webkitAudioContext) {
+    audioContext = new webkitAudioContext();
+  } else {
+    console.log("No Web Audio support!");
+    return;
+  }
+
   audioMixer = audioContext.createGain();
   audioMixer.connect(audioContext.destination);
 
