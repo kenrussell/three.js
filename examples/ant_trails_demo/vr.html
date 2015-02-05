@@ -1,0 +1,1081 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>trails - aNt and ken</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <style>
+      body {
+      color: #cccccc;
+      font-family:Monospace;
+      font-size:13px;
+      text-align:center;
+
+      background-color: #050505;
+      margin: 0px;
+      overflow: hidden;
+      }
+
+      #info {
+      position: absolute;
+      top: 0px; width: 100%;
+      padding: 5px;
+      z-index: 2;
+      }
+
+      #fullscreen {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      z-index: 3;
+      }
+
+      a {
+
+      color: #0080ff;
+      }
+
+      .menu {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+      }
+
+      .button {
+        display: inline-block;
+        padding: 8px;
+        color: #FFF;
+        background-color: #555;
+      }
+
+			.button.enabled {
+				background-color: rgb(18, 36, 70);
+			}
+
+			.button:hover {
+				cursor: pointer;
+				background-color: rgb(18, 36, 70);
+			}
+
+			.button.error {
+				pointer-events: none;
+				background-color: red;
+			}
+
+    </style>
+  </head>
+  <body>
+
+    <div id="container"></div>
+    <div id="info">trails - <a href="https://twitter.com/ant_innit">aNt</a> and <a href="https://twitter.com/gfxprogrammer">ken</a></div>
+
+<!--
+
+    <button id="fullscreen">Fullscreen</button>
+
+-->
+
+		<div class="menu">
+<!--			<div class="button mouse-look">Enable Mouse Look</div>   -->
+			<div class="button full-screen">Start VR Mode</div>
+		</div>
+
+
+    <script src="../../build/three.min.js"></script>
+
+    <script src="../js/Detector.js"></script>
+    <script src="../js/libs/stats.min.js"></script>
+    <script src="../js/controls/TrackballControls.js"></script>
+    <script src="../js/effects/VREffect.js"></script>
+    <script src="../js/controls/VRControls.js"></script>
+
+    <script src="//js.leapmotion.com/leap-0.6.4.js"></script>
+    <script src="//js.leapmotion.com/leap-plugins-0.1.10.js"></script>
+
+    <script>
+
+if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
+
+var container, stats;
+
+var camera, controls, scene, renderer;
+
+var vrEffect;
+var vrControls;
+
+var mesh;
+
+var material;
+
+var positions, colors, normals;
+
+var cube;
+
+var EPSILON = 0.001;
+
+var TRAIL_LENGTH_IN_INDICES = 1000;  // Was 65535, or maximum length
+
+var SPINNING_CUBE_SIZE = 5;
+var BASE_CUBE_SIZE = 0.2;
+
+var AUDIO_DIVISOR = 6;
+
+var CUBE_LIFETIME = 10; // seconds
+
+var START_RADIUS = 10;
+var END_RADIUS = 100;
+
+//----------------------------------------------------------------------
+// CubeWithTrail
+//
+
+function CubeWithTrail(material, cubeSize) {
+  this.cubeGeometry = new THREE.BoxGeometry(1, 1, 1);
+  this.cubeGeometry.computeBoundingSphere();
+  this.cubeMesh = new THREE.Mesh(this.cubeGeometry, material);
+
+  // Object space
+  var halfSize = 1.0 / 2.0;
+  this.cubeBackfaceVertices_ = new Array(4);
+  this.cubeBackfaceVertices_[0] = new THREE.Vector3(-halfSize,  halfSize, halfSize);
+  this.cubeBackfaceVertices_[1] = new THREE.Vector3(-halfSize, -halfSize, halfSize);
+  this.cubeBackfaceVertices_[2] = new THREE.Vector3( halfSize, -halfSize, halfSize);
+  this.cubeBackfaceVertices_[3] = new THREE.Vector3( halfSize,  halfSize, halfSize);
+
+  // Each time we add a new segment to the trail, we need to add a
+  // ring which is not connected to the previous part of the trail.
+  // The reason for this is that when we get to the end of the
+  // geometry buffer and wrap around, we mustn't connect the beginning
+  // and end of the trail.
+
+  // 8 independent triangles = 24 elements per ring.
+  var numElementsPerRing = 3 * 2 * 4;
+
+  // We consume this number of indices per ring in order to have two
+  // distinct normals per vertex.
+  var numIndicesPerRing = 4 * 2 * 2;
+
+  var numRings = Math.floor(TRAIL_LENGTH_IN_INDICES / numIndicesPerRing);
+
+  var numElements = numRings * numElementsPerRing;
+  var numVertices = numRings * numIndicesPerRing;
+
+  var trailGeometry = new THREE.BufferGeometry();
+  var indices = new Uint16Array(numElements);
+  trailGeometry.addAttribute('index', new THREE.BufferAttribute(indices, 1));
+  trailGeometry.addAttribute('position', new THREE.BufferAttribute(new Float32Array(numVertices * 3), 3));
+  trailGeometry.addAttribute('normal', new THREE.BufferAttribute(new Float32Array(numVertices * 3), 3));
+
+  var outputIndex = 0;
+  var baseIndex = 0;
+  for (var ii = 0; ii < numRings; ++ii) {
+    // Old vertices first, then new vertices, counterclockwise
+    // orientation as seen looking from the inside of the trail in
+    // the direction it's being constructed.
+    //
+    // Each vertex is duplicated in order to have two different
+    // normals per vertex for the two faces it participates in.
+
+    // Top face
+    indices[outputIndex++] = baseIndex;
+    indices[outputIndex++] = baseIndex + 7;
+    indices[outputIndex++] = baseIndex + 15;
+    indices[outputIndex++] = baseIndex;
+    indices[outputIndex++] = baseIndex + 15;
+    indices[outputIndex++] = baseIndex + 8;
+    // Left face
+    indices[outputIndex++] = baseIndex + 2;
+    indices[outputIndex++] = baseIndex + 1;
+    indices[outputIndex++] = baseIndex + 9;
+    indices[outputIndex++] = baseIndex + 2;
+    indices[outputIndex++] = baseIndex + 9;
+    indices[outputIndex++] = baseIndex + 10;
+    // Bottom face
+    indices[outputIndex++] = baseIndex + 4;
+    indices[outputIndex++] = baseIndex + 3;
+    indices[outputIndex++] = baseIndex + 11;
+    indices[outputIndex++] = baseIndex + 4;
+    indices[outputIndex++] = baseIndex + 11;
+    indices[outputIndex++] = baseIndex + 12;
+    // Right face
+    indices[outputIndex++] = baseIndex + 6;
+    indices[outputIndex++] = baseIndex + 5;
+    indices[outputIndex++] = baseIndex + 13;
+    indices[outputIndex++] = baseIndex + 6;
+    indices[outputIndex++] = baseIndex + 13;
+    indices[outputIndex++] = baseIndex + 14;
+
+    baseIndex += numIndicesPerRing;
+
+    // Normals are inserted into the normal array in the following order:
+    // old top, old left
+    // old left, old bottom
+    // old bottom, old right
+    // old right, old top
+    // new top, new left
+    // new left, new bottom
+    // new bottom, new right
+    // new right, new top
+  }
+
+  trailGeometry.getAttribute('index').needsUpdate = true;
+
+  trailGeometry.addDrawCall(0, numElements, 0);
+
+  var trailMesh = new THREE.Mesh(trailGeometry, material);
+  this.trailGeometry = trailGeometry;
+  this.trailMesh = trailMesh;
+
+  this.currentPositionIndex_ = 0;
+  this.maxPositionIndices_ = 3 * numVertices;
+
+  // top left, bottom left, bottom right, top right
+  this.oldRingVertices_ = new Array(4);
+  this.newRingVertices_ = new Array(4);
+  // top, left, bottom, right
+  this.ringNormals_ = new Array(4);
+
+  this.isFirstRing_ = true;
+
+  function fillWithVectors(a) {
+    for (var ii = 0; ii < a.length; ++ii) {
+      a[ii] = new THREE.Vector3();
+    }
+  }
+  fillWithVectors(this.oldRingVertices_);
+  fillWithVectors(this.newRingVertices_);
+  fillWithVectors(this.ringNormals_);
+
+  this.setCubeSize(cubeSize);
+
+  // Tracking state.
+  this.heading_ = new THREE.Vector3();
+  this.up_ = new THREE.Vector3(0, 1, 0);
+  // How quickly the cube moves forward along the heading (0..1).
+  this.velocity_ = 0.2;
+  // How quickly the cube interpolates toward the target (0..1).
+  this.trackingRate_ = 0.5;
+}
+
+CubeWithTrail.prototype.setCubeSize = function(cubeSize) {
+  this.cubeMesh.scale.set(cubeSize, cubeSize, cubeSize);
+};
+
+// This rotation only applies as long as the cube isn't chasing a
+// target.
+CubeWithTrail.prototype.setRotationFromQuaternion = function(quaternion) {
+  this.cubeMesh.setRotationFromQuaternion(quaternion);
+};
+
+CubeWithTrail.prototype.chaseTarget = function(target) {
+  var temp = new THREE.Vector3();
+  temp.subVectors(target, this.cubeMesh.position);
+  if (temp.length() < EPSILON) {
+    // Too little motion to work with -- just update the cube's position.
+    this.cubeMesh.position.copy(target);
+    return;
+  }
+  temp.normalize();
+  temp.lerp(this.heading_, 1.0 - this.trackingRate_);
+  if (temp.length() < EPSILON) {
+    // Too fast motion? Choose target's direction as new heading.
+    this.heading_.subVectors(target, this.cubeMesh.position);
+    this.heading_.normalize();
+  } else {
+    temp.normalize();
+    this.heading_.copy(temp);
+  }
+
+  // Stateful updating of the up vector.
+  temp.crossVectors(this.heading_, this.up_);
+  this.up_.crossVectors(temp, this.heading_);
+  if (this.up_.length() < EPSILON) {
+    // FIXME: HACK: figure out whether this is right.
+    this.up_.set(this.heading_.z, -this.heading_.x, 0);
+  }
+  this.up_.normalize();
+
+  this.cubeMesh.position.lerp(target, this.velocity_);
+
+  temp.addVectors(this.cubeMesh.position, this.heading_);
+
+  var lookAt = new THREE.Matrix4();
+  lookAt.lookAt(this.cubeMesh.position, temp, this.up_);
+  this.cubeMesh.setRotationFromMatrix(lookAt);
+
+  this.moveCubeLeavingTrail();
+};
+
+CubeWithTrail.prototype.addRing_ = function() {
+  var positions = this.trailGeometry.getAttribute('position').array;
+  var normals = this.trailGeometry.getAttribute('normal').array;
+
+  var currentPositionIndex = this.currentPositionIndex_;
+
+  for (var ii = 0; ii < this.oldRingVertices_.length; ++ii) {
+    positions[currentPositionIndex++] = this.oldRingVertices_[ii].x;
+    positions[currentPositionIndex++] = this.oldRingVertices_[ii].y;
+    positions[currentPositionIndex++] = this.oldRingVertices_[ii].z;
+    positions[currentPositionIndex++] = this.oldRingVertices_[ii].x;
+    positions[currentPositionIndex++] = this.oldRingVertices_[ii].y;
+    positions[currentPositionIndex++] = this.oldRingVertices_[ii].z;
+  }
+
+  for (var ii = 0; ii < this.newRingVertices_.length; ++ii) {
+    positions[currentPositionIndex++] = this.newRingVertices_[ii].x;
+    positions[currentPositionIndex++] = this.newRingVertices_[ii].y;
+    positions[currentPositionIndex++] = this.newRingVertices_[ii].z;
+    positions[currentPositionIndex++] = this.newRingVertices_[ii].x;
+    positions[currentPositionIndex++] = this.newRingVertices_[ii].y;
+    positions[currentPositionIndex++] = this.newRingVertices_[ii].z;
+  }
+  
+  currentPositionIndex = this.currentPositionIndex_;
+
+  for (var ii = 0; ii < 2; ++ii) {
+    var len = this.ringNormals_.length;
+    for (var jj = 0; jj < len; ++jj) {
+      normals[currentPositionIndex++] = this.ringNormals_[jj].x;
+      normals[currentPositionIndex++] = this.ringNormals_[jj].y;
+      normals[currentPositionIndex++] = this.ringNormals_[jj].z;
+      normals[currentPositionIndex++] = this.ringNormals_[(jj + 1) % len].x;
+      normals[currentPositionIndex++] = this.ringNormals_[(jj + 1) % len].y;
+      normals[currentPositionIndex++] = this.ringNormals_[(jj + 1) % len].z;
+    }
+  }
+
+  this.currentPositionIndex_ = currentPositionIndex % this.maxPositionIndices_;
+};
+
+CubeWithTrail.prototype.addToScene = function(scene) {
+  scene.add(this.cubeMesh);
+  scene.add(this.trailMesh);
+};
+
+CubeWithTrail.prototype.removeFromScene = function(scene) {
+  scene.remove(this.cubeMesh);
+  scene.remove(this.trailMesh);
+};
+
+CubeWithTrail.prototype.setPosition = function(position) {
+  this.cubeMesh.position.copy(position);
+};
+
+CubeWithTrail.prototype.moveCubeLeavingTrail = function() {
+  for (var ii = 0; ii < this.oldRingVertices_.length; ++ii) {
+    this.oldRingVertices_[ii].copy(this.newRingVertices_[ii]);
+  }
+
+  this.cubeMesh.updateMatrixWorld();
+  var worldMatrix = this.cubeMesh.matrixWorld;
+
+  // Now compute the vertices by actually transforming the cube's geometry.
+  var len = this.cubeBackfaceVertices_.length;
+  for (var ii = 0; ii < len; ++ii) {
+    this.newRingVertices_[ii].copy(this.cubeBackfaceVertices_[ii]);
+    this.newRingVertices_[ii].applyMatrix4(worldMatrix);
+  }
+
+  if (this.isFirstRing_) {
+    this.isFirstRing_ = false;
+
+    // Set up the normals.
+    this.ringNormals_[0].set(  0,  1,  0);
+    this.ringNormals_[1].set( -1,  0,  0);
+    this.ringNormals_[2].set(  0, -1,  0);
+    this.ringNormals_[3].set(  1,  0,  0);
+
+    // Don't emit until we have populated both oldRingVertices_ and
+    // newRingVertices_.
+    return;
+  }
+
+  this.addRing_();
+
+  this.trailGeometry.computeBoundingSphere();
+  this.trailGeometry.getAttribute('position').needsUpdate = true;
+  this.trailGeometry.getAttribute('normal').needsUpdate = true;
+};
+
+//----------------------------------------------------------------------
+// CubeShooter
+//
+
+function CubeShooter(scene, camera, clickDistance, centerPoint, cubeSize, touchIdentifier) {
+  this.scene_ = scene;
+  this.camera_ = camera;
+  this.clickDistance_ = clickDistance;
+  this.centerPoint_ = new THREE.Vector3();
+  this.centerPoint_.copy(centerPoint);
+  this.axis_ = new THREE.Vector3();
+  this.angle_ = 0;
+  this.radius_ = START_RADIUS;
+  this.startDirectionNormalized_ = new THREE.Vector3();
+  this.touchIdentifier_ = touchIdentifier;
+
+  this.target_ = new THREE.Vector3();
+
+//  this.angleScaleFactor_ = 0.01;
+  this.angleScaleFactor_ = 3.0;
+
+  this.startTime_ = 0;
+
+  // Pick next "random" sound
+  this.soundId_ = 0;
+  if (audioLoaded) {
+    this.soundId_ = randomizedArray[nextSoundIndex];
+    nextSoundIndex = (nextSoundIndex + 1) % randomizedArray.length;
+  }
+
+  this.material_ = materials[this.soundId_];
+
+  this.cube_ = new CubeWithTrail(this.material_, cubeSize);
+  this.cube_.addToScene(scene);
+}
+
+CubeShooter.prototype.setRotationFromQuaternion = function(quaternion) {
+  this.cube_.setRotationFromQuaternion(quaternion);
+};
+
+// x and y are in normalized device coordinates: (-1..1) in x, (1.0..-1.0) in y
+CubeShooter.prototype.mouseMove = function(x, y) {
+  var mouse3D = new THREE.Vector3(x, y, 0.5);
+
+  mouse3D.unproject(this.camera_);
+
+  // FIXME: this isn't correct -- want to intersect the unprojected
+  // vector with the viewing plane at this.clickDistance_ from the eye
+  // point. I don't know how to construct that plane using Three's
+  // math classes.
+  mouse3D.subVectors(mouse3D, this.camera_.position);
+  mouse3D.normalize();
+  mouse3D.multiplyScalar(this.clickDistance_);
+  mouse3D.add(this.camera_.position);
+  
+  // Move the cube
+  this.cube_.setPosition(mouse3D);
+};
+
+CubeShooter.prototype.touchIdentifier = function() {
+  return this.touchIdentifier_;
+};
+
+CubeShooter.prototype.mouseUp = function(time) {
+  this.startTime_ = time;
+
+  mute(this.soundId_, false);
+
+  this.setCubeSize(BASE_CUBE_SIZE);
+
+  // Choose random axis
+  this.axis_.set(2 * Math.random() - 1,
+                 2 * Math.random() - 1,
+                 2 * Math.random() - 1);
+  this.axis_.normalize();
+
+  // Choose random starting direction in the 2D plane orthogonal to the axis.
+  this.startDirectionNormalized_.set(2 * Math.random() - 1,
+                                     2 * Math.random() - 1,
+                                     2 * Math.random() - 1);
+  
+  // Make starting point conform to radius on plane.
+  // There has got to be a simpler way to compute this.
+  var plane = new THREE.Plane();
+  plane.setFromNormalAndCoplanarPoint(this.axis_, this.centerPoint_);
+  this.startDirectionNormalized_ = plane.projectPoint(this.startDirectionNormalized_);
+  this.startDirectionNormalized_.subVectors(this.startDirectionNormalized_, this.centerPoint_);
+  this.startDirectionNormalized_.normalize();
+};
+
+CubeShooter.prototype.setTargetRadius = function(targetRadius) {
+  this.targetRadius_ = targetRadius;
+};
+
+CubeShooter.prototype.setCubeSize = function(cubeSize) {
+  this.cube_.setCubeSize(cubeSize);
+};
+
+CubeShooter.prototype.update = function(time) {
+  var audioVolume = getAverageVolume(this.soundId_);
+  this.cube_.setCubeSize(BASE_CUBE_SIZE + audioVolume / AUDIO_DIVISOR);
+
+  // FIXME: try making the angle update faster with higher volume.
+  // Need to figure out proper delta-T and integration.
+
+  // This integration was an accident, but actually looks kind of cool
+  // this.angle_ += this.angleScaleFactor_ * time;
+
+  this.angle_ = this.angleScaleFactor_ * time;
+
+  var lifetimeFraction = (time - this.startTime_) / CUBE_LIFETIME;
+  if (lifetimeFraction > 1) {
+    this.cube_.removeFromScene(this.scene_);
+
+    // See whether we should really mute ourselves
+    var stillAlive = false;
+    for (var ii = 0; ii < activeShooters.length; ++ii) {
+      if (activeShooters[ii] !== this &&
+          activeShooters[ii].soundId_ == this.soundId_) {
+        stillAlive = true;
+        break;
+      }
+    }
+    if (!stillAlive) {
+      mute(this.soundId_, true);
+    }
+    return false;
+  }
+
+  this.radius_ = (START_RADIUS * (1.0 - lifetimeFraction) +
+                  END_RADIUS * lifetimeFraction);
+
+  this.target_.copy(this.startDirectionNormalized_);
+  this.target_.multiplyScalar(this.radius_);
+  this.target_.applyAxisAngle(this.axis_, this.angle_);
+  this.target_.add(this.centerPoint_);
+
+  this.cube_.chaseTarget(this.target_);
+
+  var pos = this.cube_.cubeMesh.position;
+  positionSource(this.soundId_, pos.x, pos.y, pos.z);
+
+  return true;
+};
+
+
+CubeShooter.prototype.removeFromScene = function(scene) {
+  this.cube_.removeFromScene(scene);
+};
+
+//----------------------------------------------------------------------
+// Event handlers
+//
+
+// The cubes about to be shot
+var cubesToShoot = [];
+
+// The cubes which have already been shot
+var activeShooters = [];
+
+function onMouseDown(event) {
+  var touchIdentifier = 0;
+  if ('identifier' in event)
+    touchIdentifier = event.identifier;
+  cubesToShoot.push(new CubeShooter(scene, camera, 100.0, new THREE.Vector3(0.0, 0.0, 0.0), SPINNING_CUBE_SIZE, touchIdentifier));
+  onMouseMove(event);
+}
+
+function onMouseMove(event) {
+  if (cubesToShoot.length == 0)
+    return;
+
+  var currentShooter;
+  if ('identifier' in event) {
+    for (var ii = 0; ii < cubesToShoot.length; ++ii) {
+      if (cubesToShoot[ii].touchIdentifier() == event.identifier) {
+        currentShooter = cubesToShoot[ii];
+        break;
+      }
+    }
+  } else {
+    currentShooter = cubesToShoot[0];
+  }
+
+  if (!currentShooter)
+    return;
+
+  currentShooter.mouseMove((event.clientX / window.innerWidth) * 2 - 1,
+                           -(event.clientY / window.innerHeight) * 2 + 1);
+}
+
+function onMouseUp(event) {
+  if (cubesToShoot.length == 0)
+    return;
+
+  var currentShooter;
+  if ('identifier' in event) {
+    for (var ii = 0; ii < cubesToShoot.length; ++ii) {
+      if (cubesToShoot[ii].touchIdentifier() == event.identifier) {
+        currentShooter = cubesToShoot.splice(ii, 1)[0];
+        break;
+      }
+    }
+  } else {
+    currentShooter = cubesToShoot.splice(0, 1)[0];
+  }
+
+  if (!currentShooter) {
+    console.log("ERROR: did not find cube shooter associated with either identifier " +
+                event.identifier + " or index 0");
+    return;
+  }
+
+  currentShooter.mouseUp(currentTime());
+  activeShooters.push(currentShooter);
+}
+
+function onTouchStart(event) {
+  for (var ii = 0; ii < event.changedTouches.length; ++ii) {
+    onMouseDown(event.changedTouches.item(ii));
+  }
+  event.preventDefault();
+}
+
+function onTouchMove(event) {
+  for (var ii = 0; ii < event.changedTouches.length; ++ii) {
+    onMouseMove(event.changedTouches.item(ii));
+  }
+  event.preventDefault();
+}
+
+function onTouchEnd(event) {
+  for (var ii = 0; ii < event.changedTouches.length; ++ii) {
+    onMouseUp(event.changedTouches.item(ii));
+  }
+  event.preventDefault();
+}
+
+//----------------------------------------------------------------------
+// BufferLoader
+//
+
+function BufferLoader(context, urlList, callback) {
+  this.context = context;
+  this.urlList = urlList;
+  this.onload = callback;
+  this.bufferList = new Array();
+  this.loadCount = 0;
+}
+
+BufferLoader.prototype.loadBuffer = function(url, index) {
+  // Load buffer asynchronously
+  var request = new XMLHttpRequest();
+  request.open("GET", url, true);
+  request.responseType = "arraybuffer";
+
+  var loader = this;
+
+  request.onload = function() {
+    // Asynchronously decode the audio file data in request.response
+    loader.context.decodeAudioData(
+      request.response,
+      function(buffer) {
+        if (!buffer) {
+          alert('error decoding file data: ' + url);
+          return;
+        }
+        loader.bufferList[index] = buffer;
+        if (++loader.loadCount == loader.urlList.length)
+          loader.onload(loader.bufferList);
+      }
+    );
+  }
+
+  request.onerror = function() {
+    alert('BufferLoader: XHR error');
+  }
+
+  request.send();
+}
+
+BufferLoader.prototype.load = function() {
+  for (var i = 0; i < this.urlList.length; ++i)
+  this.loadBuffer(this.urlList[i], i);
+}
+
+//----------------------------------------------------------------------
+// Audio
+//
+
+var audioContext, bufferLoader, bufferedList, sourceList, audioMixer;
+var audioLoaded = false;
+var samples = [	"snd/000.wav", "snd/001.wav", "snd/002.wav", 
+				"snd/003.wav", "snd/004.wav", "snd/005.wav", 
+				"snd/006.wav", "snd/007.wav", "snd/008.wav",
+		 		"snd/009.wav", "snd/010.wav", "snd/011.wav"];
+var materials;
+
+var randomizedArray;
+var nextSoundIndex = 0;
+
+function innit() {
+  materials = [];
+  for (var ii = 0; ii < samples.length - 1; ++ii) {
+    var color = new THREE.Color();
+    color.r = color.g = color.b = 0.5 + (0.4 * ii / samples.length);
+    materials.push(new THREE.MeshPhongMaterial( {
+      color: color, ambient: color, specular: 'rgb(80%,80%,100%)',
+      opacity: 0.3,
+      transparent: true,
+      shininess: 250,
+      side: THREE.DoubleSide
+    } ));
+  }
+
+  materials.push(new THREE.MeshPhongMaterial( {
+    color: 0xff0000, ambient: 0xff0000, specular: 'rgb(80%,80%,100%)',
+    shininess: 250,
+    side: THREE.DoubleSide
+  } ));
+  
+  loadAudio();
+  listenerPostion(0, 0, 0);
+}
+
+function listenerPostion(x, y, z) {
+  audioContext.listener.setPosition(x, y, z);
+}
+
+function loadAudio() {
+  if (window.AudioContext) {
+    audioContext = new AudioContext();
+  } else if (window.webkitAudioContext) {
+    audioContext = new webkitAudioContext();
+  } else {
+    console.log("No Web Audio support!");
+    return;
+  }
+
+  audioMixer = audioContext.createGain();
+  audioMixer.connect(audioContext.destination);
+
+  bufferLoader = new BufferLoader(audioContext, samples, audioBufferLoaded);
+  bufferLoader.load();
+}
+
+function audioBufferLoaded(bufferList) {
+  bufferedList = bufferList;
+  sourceList = [];
+  
+  for(var i = 0; i < samples.length; i++) {
+    var sound = new Object();
+    sound.source = audioContext.createBufferSource();
+    sound.source.buffer = bufferedList[i];
+    sound.source.loop = true;
+    
+    sound.analyser = audioContext.createAnalyser();
+    sound.analyser.fftSize = 1024;
+    sound.freqData = new Uint8Array(sound.analyser.frequencyBinCount);
+
+    sound.panner = audioContext.createPanner();
+    sound.panner.setPosition(0, 0, 0);
+    sound.panner.refDistance = 30;
+
+    sound.gain = audioContext.createGain();
+    sound.gain.gain.value = 0;
+
+    sound.source.connect(sound.analyser);
+    sound.analyser.connect(sound.panner);
+    sound.panner.connect(sound.gain);
+    sound.gain.connect(audioMixer);
+
+    sourceList[i] = sound;
+  }
+
+  randomizedArray = new Array(sourceList.length);
+  for (var i = 0; i < randomizedArray.length; ++i) {
+    randomizedArray[i] = i;
+  }
+  // Knuth card shuffle
+  for (var i = randomizedArray.length - 1; i > 0; --i) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var t = randomizedArray[i];
+    randomizedArray[i] = randomizedArray[j];
+    randomizedArray[j] = t;
+  }
+
+  audioLoaded = true;
+  playAll();
+
+  /*
+	// examples
+	mute(4, false); // unmute sample 1
+	setVolume(0, 0.2) // set the volume of sample 3 to 0.2
+
+	// get the current levelmeter of sample 1
+	updateAnaliserData(1); // sample 1
+	var audioMeter = getAverageVolume(1); // sample 1 freqDate to avarage.
+
+	positionSource(1, 5.0, 1.0, 3.0); // 3d positioning
+
+	// startSource(4); // start playing a sample
+	// stopSource(4);	// stop playing a sample
+
+	// id = sample, dt = secondsSinceLastFrame, lastPos of cube, nextPos = where it'll be nextframe
+	// forget this, it'll blow the systems audio output- proably not doing it correctly anyway.
+	// setDopplerShift(1, 0.1, [0, 0, 0], [1, 0, 0]);
+  */
+}
+
+function playAll() {
+  for(var i = 0; i < samples.length; i++) {
+    startSource(i);
+    positionSource(i, 0, 0, 0);
+  }
+}
+
+// these could be inside the object
+function updateSound() {
+  if (audioLoaded) {
+    for(var i = 0; i < sourceList.length; i++) {
+      updateAnaliserData(i);
+    }
+  }
+}
+
+function startSource(id) {
+  if(audioLoaded) sourceList[id].source.start(0);
+}
+
+function stopSource(id) {
+  if(audioLoaded) sourceList[id].source.stop(0);
+}
+
+function mute(id, mute) {
+  if(audioLoaded) {
+    if(mute) {
+      sourceList[id].gain.gain.value = 0;
+    } else {
+      sourceList[id].gain.gain.value = 1;
+    }
+  }
+}
+
+function setVolume(id, vol) {
+  if(audioLoaded) sourceList[id].gain.gain.value = vol;
+}
+
+function positionSource(id, x, y, z) {
+  if(audioLoaded) sourceList[id].panner.setPosition(x, y, z);
+}
+
+function setDopplerShift(id, dt, lastPos, nextPos) {
+  var px = lastPos.x, py = lastPos.y, pz = lastPos.z;
+  var dx = nextPos.x-px, dy = nextPos.y-py, dz = nextPos.z-pz;
+
+  sourceList[id].panner.setPosition(nextPos.x, nextPos.y, nextPos.z);
+  sourceList[id].panner.setVelocity(dx/dt, dy/dt, dz/dt);
+}
+
+function getAverageVolume(id) {
+  if (!audioLoaded)
+    return 0;
+
+  var values = 0;
+  var average;
+  var length = sourceList[id].freqData.length;
+  for (var i = 0; i < length; i++){values += sourceList[id].freqData[i]};
+  average = values / length;
+  return average;
+}
+
+function updateAnaliserData(id) {
+  if(sourceList[id].analyser != undefined) {
+    sourceList[id].analyser.smoothingTimeConstant = 0.1;
+    sourceList[id].analyser.getByteFrequencyData(sourceList[id].freqData);
+  }
+}
+
+
+function init() {
+
+  innit();
+
+  container = document.getElementById( 'container' );
+
+  //
+
+  console.log('window.innerWidth/innerHeight: (' + window.innerWidth + ', ' + window.innerHeight + ')');
+  camera = new THREE.PerspectiveCamera( 30, window.innerWidth / window.innerHeight, 1, 500 );
+  camera.position.y = 30;
+  camera.position.z = 200;
+  camera.lookAt(new THREE.Vector3(0, 0, 0));
+
+  scene = new THREE.Scene();
+  scene.add(camera);
+
+  scene.add( new THREE.AmbientLight( 0x444444 ) );
+
+  var light1 = new THREE.DirectionalLight( 0xffffff, 0.5 );
+  light1.position.set( 1, 1, 1 );
+  scene.add( light1 );
+
+  var light2 = new THREE.DirectionalLight( 0xffffff, 1.5 );
+  light2.position.set( 0, -1, 0 );
+  scene.add( light2 );
+
+  material = new THREE.MeshPhongMaterial( {
+    color: 0xff0000, ambient: 0xff0000, specular: 0xffffff,
+    shininess: 250,
+    side: THREE.DoubleSide
+  } );
+
+
+//  cube = new CubeWithTrail(material);
+//  cube.addToScene(scene);
+
+  renderer = new THREE.WebGLRenderer( { alpha: false } );
+  renderer.setClearColor( new THREE.Color(0x000000) );
+  renderer.setSize( window.innerWidth, window.innerHeight );
+
+  var fullScreenButton = document.querySelector( '.full-screen' );
+//  var mouseLookButton = document.querySelector( '.mouse-look' );
+//  var mouseLook = false;
+
+  fullScreenButton.onclick = function() {
+      vrEffect.setFullScreen( true );
+  };
+
+  vrControls = new THREE.VRControls(camera);
+  headControls = vrControls;
+
+    vrEffect = new THREE.VREffect(renderer, VREffectLoaded);
+    function VREffectLoaded(error) {
+	if (error) {
+	    fullScreenButton.innerHTML = error;
+	    fullScreenButton.classList.add('error');
+	}
+    }
+
+//  renderer.gammaInput = true;
+//  renderer.gammaOutput = true;
+//  renderer.physicallyBasedShading = true;
+
+  container.appendChild( renderer.domElement );
+
+//  controls = new THREE.TrackballControls(camera, renderer.domElement);
+//  controls.target.set(0, 0, 0);
+
+  //
+
+  stats = new Stats();
+  stats.domElement.style.position = 'absolute';
+  stats.domElement.style.top = '0px';
+  container.appendChild( stats.domElement );
+
+  //
+
+  window.addEventListener( 'resize', onWindowResize, false );
+
+  //
+
+  renderer.domElement.addEventListener('mousedown', onMouseDown, false);
+  renderer.domElement.addEventListener('mousemove', onMouseMove, false);
+  renderer.domElement.addEventListener('mouseup', onMouseUp, false);
+  renderer.domElement.addEventListener('touchstart', onTouchStart, false);
+  renderer.domElement.addEventListener('touchmove', onTouchMove, false);
+  renderer.domElement.addEventListener('touchend', onTouchEnd, false);
+  renderer.domElement.addEventListener('touchcancel', onTouchEnd, false);
+
+/*
+
+  // Fullscreen button
+
+  var fullscreenBtn = document.getElementById('fullscreen');
+  if(document.fullscreenEnabled || document.webkitFullscreenEnabled || document.mozFullScreenEnabled) {
+      fullscreenBtn.addEventListener("click", function() {
+          if(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullscreenElement) {
+            if (document.cancelFullScreen)
+              document.cancelFullScreen();
+            else if (document.webkitCancelFullScreen)
+              document.webkitCancelFullScreen();
+            else if (document.mozCancelFullScreen)
+              document.mozCancelFullScreen();
+          } else {
+            if (container.requestFullScreen)
+              container.requestFullScreen();
+            else if (container.webkitRequestFullScreen)
+              container.webkitRequestFullScreen(Element.ALLOW_KEYBOARD_INPUT);
+            else if (container.mozRequestFullScreen)
+              container.mozRequestFullScreen();
+          }
+      });
+  } else {
+      fullscreenBtn.parentElement.removeChild(fullscreenBtn);
+  }
+*/
+}
+
+function onWindowResize() {
+  console.log("resize");
+
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+
+  renderer.setSize( window.innerWidth, window.innerHeight );
+}
+
+//
+
+function animate() {
+
+  requestAnimationFrame( animate );
+
+  render();
+  stats.update();
+
+}
+
+var startTime;
+var time_;
+
+function updateTime() {
+  if (startTime === undefined) {
+    startTime = Date.now();
+  }
+
+  time_ = 0.001 * (Date.now() - startTime);
+}
+
+function currentTime() {
+  return time_;
+}
+
+function render() {
+
+//  var cubeRadius = 50;
+//  var cubePosition = new THREE.Vector3(cubeRadius * Math.sin(time / 2),
+//                                       30 * Math.sin(time / 10),
+//                                       cubeRadius * -1 * Math.cos(time / 2));
+//  cube.chaseTarget(cubePosition);
+
+//  controls.update();
+
+  updateTime();
+
+  // Spin madly the cubes to be shot
+  for (var ii = 0; ii < cubesToShoot.length; ++ii) {
+    var randomRotation = new THREE.Euler(2 * Math.PI * Math.random(),
+                                         2 * Math.PI * Math.random(),
+                                         2 * Math.PI * Math.random());
+    cubesToShoot[ii].setRotationFromQuaternion(new THREE.Quaternion().setFromEuler(randomRotation));
+  }
+
+  var ii = 0;
+  while (ii < activeShooters.length) {
+    if (activeShooters[ii].update(time_)) {
+      ++ii;
+    } else {
+      activeShooters.splice(ii, 1);
+    }
+  }
+
+  updateSound();
+
+  Leap.loop()
+    .use('boneHand', {
+      scene: scene,
+      render: function(timestamp) {}
+    });
+
+//  renderer.render( scene, camera );
+    headControls.update();
+    vrEffect.render(scene, camera);
+}
+
+init();
+animate();
+
+    </script>
+  </body>
+</html>
