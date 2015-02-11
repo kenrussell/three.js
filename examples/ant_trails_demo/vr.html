@@ -886,7 +886,7 @@ function init() {
   //
 
   console.log('window.innerWidth/innerHeight: (' + window.innerWidth + ', ' + window.innerHeight + ')');
-  camera = new THREE.PerspectiveCamera( 30, window.innerWidth / window.innerHeight, 1, 500 );
+  camera = new THREE.PerspectiveCamera( 30, window.innerWidth / window.innerHeight, .1, 10 );
   camera.position.y = 30;
   camera.position.z = 200;
   camera.lookAt(new THREE.Vector3(0, 0, 0));
@@ -929,13 +929,13 @@ function init() {
   vrControls = new THREE.VRControls(camera);
   headControls = vrControls;
 
-    vrEffect = new THREE.VREffect(renderer, VREffectLoaded);
-    function VREffectLoaded(error) {
-	if (error) {
-	    fullScreenButton.innerHTML = error;
-	    fullScreenButton.classList.add('error');
-	}
+  vrEffect = new THREE.VREffect(renderer, VREffectLoaded);
+  function VREffectLoaded(error) {
+    if (error) {
+      fullScreenButton.innerHTML = error;
+      fullScreenButton.classList.add('error');
     }
+  }
 
 //  renderer.gammaInput = true;
 //  renderer.gammaOutput = true;
@@ -994,6 +994,30 @@ function init() {
       fullscreenBtn.parentElement.removeChild(fullscreenBtn);
   }
 */
+
+  window.controller = controller = new Leap.Controller({
+    background: true,
+    optimizeHMD: true
+  });
+
+  controller.use('transform', {
+    // This matrix flips the x, y, and z axis, scales to meters, and offsets the hands by -8cm.
+    vr: true,
+
+    // This causes the camera's matrix transforms (position, rotation, scale) to be applied to the hands themselves
+    // The parent of the bones remain the scene, allowing the data to remain in easy-to-work-with world space.
+    // (As the hands will usually interact with multiple objects in the scene.)
+    effectiveParent: camera
+  });
+
+  controller.use('boneHand', {
+    scene: scene,
+    // No arm
+    arm: false,
+    render: function(timestamp) {}
+  });
+
+  controller.connect();
 }
 
 function onWindowResize() {
@@ -1062,15 +1086,9 @@ function render() {
 
   updateSound();
 
-  Leap.loop()
-    .use('boneHand', {
-      scene: scene,
-      render: function(timestamp) {}
-    });
-
 //  renderer.render( scene, camera );
-    headControls.update();
-    vrEffect.render(scene, camera);
+  headControls.update();
+  vrEffect.render(scene, camera);
 }
 
 init();
