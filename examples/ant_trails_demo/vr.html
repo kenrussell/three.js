@@ -91,6 +91,7 @@
 
     <script src="//js.leapmotion.com/leap-0.6.4.js"></script>
     <script src="//js.leapmotion.com/leap-plugins-0.1.10.js"></script>
+    <script src="leap.rigged-hand-0.1.6.js"></script>
 
     <script>
 
@@ -115,21 +116,23 @@ var EPSILON = 0.001;
 
 var TRAIL_LENGTH_IN_INDICES = 1000;  // Was 65535, or maximum length
 
-var SPINNING_CUBE_SIZE = 5;
-var BASE_CUBE_SIZE = 0.2;
+var SPINNING_CUBE_SIZE = .05;
+var BASE_CUBE_SIZE = 0.02;
 
-var AUDIO_DIVISOR = 6;
+var AUDIO_DIVISOR = 70;
 
 var CUBE_LIFETIME = 10; // seconds
 
-var START_RADIUS = 10;
-var END_RADIUS = 100;
+var START_RADIUS = 1;
+var END_RADIUS = 10;
 
 //----------------------------------------------------------------------
 // CubeWithTrail
 //
 
-function CubeWithTrail(material, cubeSize) {
+function CubeWithTrail(scene, material, cubeSize) {
+  this.scene_ = scene;
+
   this.cubeGeometry = new THREE.BoxGeometry(1, 1, 1);
   this.cubeGeometry.computeBoundingSphere();
   this.cubeMesh = new THREE.Mesh(this.cubeGeometry, material);
@@ -347,14 +350,14 @@ CubeWithTrail.prototype.addRing_ = function() {
   this.currentPositionIndex_ = currentPositionIndex % this.maxPositionIndices_;
 };
 
-CubeWithTrail.prototype.addToScene = function(scene) {
-  scene.add(this.cubeMesh);
-  scene.add(this.trailMesh);
+CubeWithTrail.prototype.addToScene = function() {
+  this.scene_.add(this.cubeMesh);
+  this.scene_.add(this.trailMesh);
 };
 
-CubeWithTrail.prototype.removeFromScene = function(scene) {
-  scene.remove(this.cubeMesh);
-  scene.remove(this.trailMesh);
+CubeWithTrail.prototype.removeFromScene = function() {
+  this.scene_.remove(this.cubeMesh);
+  this.scene_.remove(this.trailMesh);
 };
 
 CubeWithTrail.prototype.setPosition = function(position) {
@@ -429,8 +432,8 @@ function CubeShooter(scene, camera, clickDistance, centerPoint, cubeSize, touchI
 
   this.material_ = materials[this.soundId_];
 
-  this.cube_ = new CubeWithTrail(this.material_, cubeSize);
-  this.cube_.addToScene(scene);
+  this.cube_ = new CubeWithTrail(this.scene_, this.material_, cubeSize);
+  this.cube_.addToScene();
 }
 
 CubeShooter.prototype.setRotationFromQuaternion = function(quaternion) {
@@ -456,11 +459,15 @@ CubeShooter.prototype.mouseMove = function(x, y) {
   this.cube_.setPosition(mouse3D);
 };
 
+CubeShooter.prototype.moveToWorld = function(x, y, z) {
+  this.cube_.setPosition(new THREE.Vector3(x, y, z));
+};
+
 CubeShooter.prototype.touchIdentifier = function() {
   return this.touchIdentifier_;
 };
 
-CubeShooter.prototype.mouseUp = function(time) {
+CubeShooter.prototype.fire = function(time) {
   this.startTime_ = time;
 
   mute(this.soundId_, false);
@@ -509,7 +516,7 @@ CubeShooter.prototype.update = function(time) {
 
   var lifetimeFraction = (time - this.startTime_) / CUBE_LIFETIME;
   if (lifetimeFraction > 1) {
-    this.cube_.removeFromScene(this.scene_);
+    this.cube_.removeFromScene();
 
     // See whether we should really mute ourselves
     var stillAlive = false;
@@ -534,6 +541,11 @@ CubeShooter.prototype.update = function(time) {
   this.target_.applyAxisAngle(this.axis_, this.angle_);
   this.target_.add(this.centerPoint_);
 
+
+  // FIXME: HACK
+  this.target_.set(1, 0, 0);
+
+
   this.cube_.chaseTarget(this.target_);
 
   var pos = this.cube_.cubeMesh.position;
@@ -543,25 +555,41 @@ CubeShooter.prototype.update = function(time) {
 };
 
 
-CubeShooter.prototype.removeFromScene = function(scene) {
-  this.cube_.removeFromScene(scene);
+CubeShooter.prototype.removeFromScene = function() {
+  this.cube_.removeFromScene(this.scene_);
 };
 
 //----------------------------------------------------------------------
 // Event handlers
 //
 
-// The cubes about to be shot
-var cubesToShoot = [];
+// The cubes about to be shot, indexed by touch identifier
+var cubesToShoot = {};
 
 // The cubes which have already been shot
 var activeShooters = [];
+
+function addCubeShooter(touchIdentifier) {
+  var shooter = new CubeShooter(scene, camera, 1.0, new THREE.Vector3(0.0, 0.0, 0.0), SPINNING_CUBE_SIZE, touchIdentifier);
+  cubesToShoot[touchIdentifier] = shooter;
+  return shooter;
+}
+
+function getCubeShooter(touchIdentifier) {
+  return cubesToShoot[touchIdentifier];
+}
+
+function removeCubeShooter(touchIdentifier) {
+  var ret = cubesToShoot[touchIdentifier];
+  delete cubesToShoot[touchIdentifier];
+  return ret;
+}
 
 function onMouseDown(event) {
   var touchIdentifier = 0;
   if ('identifier' in event)
     touchIdentifier = event.identifier;
-  cubesToShoot.push(new CubeShooter(scene, camera, 100.0, new THREE.Vector3(0.0, 0.0, 0.0), SPINNING_CUBE_SIZE, touchIdentifier));
+  addCubeShooter(touchIdentifier);
   onMouseMove(event);
 }
 
@@ -569,17 +597,11 @@ function onMouseMove(event) {
   if (cubesToShoot.length == 0)
     return;
 
-  var currentShooter;
+  var touchIdentifier = 0;
   if ('identifier' in event) {
-    for (var ii = 0; ii < cubesToShoot.length; ++ii) {
-      if (cubesToShoot[ii].touchIdentifier() == event.identifier) {
-        currentShooter = cubesToShoot[ii];
-        break;
-      }
-    }
-  } else {
-    currentShooter = cubesToShoot[0];
+    touchIdentifier = event.identifier;
   }
+  var currentShooter = getCubeShooter(touchIdentifier);
 
   if (!currentShooter)
     return;
@@ -592,17 +614,11 @@ function onMouseUp(event) {
   if (cubesToShoot.length == 0)
     return;
 
-  var currentShooter;
+  var touchIdentifier = 0;
   if ('identifier' in event) {
-    for (var ii = 0; ii < cubesToShoot.length; ++ii) {
-      if (cubesToShoot[ii].touchIdentifier() == event.identifier) {
-        currentShooter = cubesToShoot.splice(ii, 1)[0];
-        break;
-      }
-    }
-  } else {
-    currentShooter = cubesToShoot.splice(0, 1)[0];
+    touchIdentifier = event.identifier;
   }
+  var currentShooter = removeCubeShooter(touchIdentifier);
 
   if (!currentShooter) {
     console.log("ERROR: did not find cube shooter associated with either identifier " +
@@ -610,7 +626,7 @@ function onMouseUp(event) {
     return;
   }
 
-  currentShooter.mouseUp(currentTime());
+  currentShooter.fire(currentTime());
   activeShooters.push(currentShooter);
 }
 
@@ -726,6 +742,10 @@ function listenerPostion(x, y, z) {
   audioContext.listener.setPosition(x, y, z);
 }
 
+function listenerOrientation(x, y, z, xUp, yUp, zUp) {
+  audioContext.listener.setOrientation(x, y, z, xUp, yUp, zUp);
+}
+
 function loadAudio() {
   if (window.AudioContext) {
     audioContext = new AudioContext();
@@ -760,6 +780,7 @@ function audioBufferLoaded(bufferList) {
     sound.panner = audioContext.createPanner();
     sound.panner.setPosition(0, 0, 0);
     sound.panner.refDistance = 30;
+    sound.panner.rolloffFactor = 0;
 
     sound.gain = audioContext.createGain();
     sound.gain.gain.value = 0;
@@ -793,7 +814,7 @@ function audioBufferLoaded(bufferList) {
 	setVolume(0, 0.2) // set the volume of sample 3 to 0.2
 
 	// get the current levelmeter of sample 1
-	updateAnaliserData(1); // sample 1
+	updateAnalyserData(1); // sample 1
 	var audioMeter = getAverageVolume(1); // sample 1 freqDate to avarage.
 
 	positionSource(1, 5.0, 1.0, 3.0); // 3d positioning
@@ -817,8 +838,19 @@ function playAll() {
 // these could be inside the object
 function updateSound() {
   if (audioLoaded) {
+    if (vrControls) {
+//      listenerPostion(camera.position);
+
+      var front = new THREE.Vector3(0, 0, -1);
+      front.transformDirection(camera.matrixWorldInverse);
+      var up = new THREE.Vector3(0, 1, 0);
+      up.transformDirection(camera.matrixWorldInverse);
+      listenerOrientation(front.x, front.y, front.z,
+			  up.x, up.y, up.z);
+    }
+
     for(var i = 0; i < sourceList.length; i++) {
-      updateAnaliserData(i);
+      updateAnalyserData(i);
     }
   }
 }
@@ -869,7 +901,7 @@ function getAverageVolume(id) {
   return average;
 }
 
-function updateAnaliserData(id) {
+function updateAnalyserData(id) {
   if(sourceList[id].analyser != undefined) {
     sourceList[id].analyser.smoothingTimeConstant = 0.1;
     sourceList[id].analyser.getByteFrequencyData(sourceList[id].freqData);
@@ -923,7 +955,7 @@ function init() {
 //  var mouseLook = false;
 
   fullScreenButton.onclick = function() {
-      vrEffect.setFullScreen( true );
+    vrEffect.setFullScreen( true );
   };
 
   vrControls = new THREE.VRControls(camera);
@@ -1010,11 +1042,20 @@ function init() {
     effectiveParent: camera
   });
 
+/*
   controller.use('boneHand', {
     scene: scene,
     // No arm
     arm: false,
     render: function(timestamp) {}
+  });
+*/
+
+  controller.use('riggedHand', {
+    parent: scene,
+    camera: camera,
+    positionScale: 1,
+    renderFn: null,
   });
 
   controller.connect();
@@ -1055,6 +1096,57 @@ function currentTime() {
   return time_;
 }
 
+// The Leap Motion might lose tracking state for the hand at any time.
+// To handle this, we keep track of the fingers we're looking at.
+
+var trackedFingers = {};
+
+function updateFingers() {
+  var controller = window.controller;
+  var frame = controller.frame();
+  if (frame) {
+    var currentFingers = {};
+    frame.hands.forEach(function(hand) {
+      hand.fingers.forEach(function(finger) {
+	currentFingers[finger.id] = finger;
+      });
+    });
+
+    // Try to disambiguate Leap Motion fingers from other touch events.
+    var fingerPrefix = "finger";
+    // Only fire shooters for fingers we are still able to track.
+    // Expire shooters for fingers we lost.
+    for (var ii in trackedFingers) {
+      if (!(ii in currentFingers)) {
+	var shooter = removeCubeShooter(fingerPrefix + ii);
+	if (shooter) {
+	  shooter.removeFromScene();
+	}
+      }
+    }
+    // Update or create new cube shooters.
+    for (var ii in currentFingers) {
+      var finger = currentFingers[ii];
+      var fakeTouchIdentifier = fingerPrefix + ii;
+      if (finger.extended) {
+	var shooter = getCubeShooter(fakeTouchIdentifier);
+	if (!shooter) {
+	  shooter = addCubeShooter(fakeTouchIdentifier);
+	}
+	var tip = finger.tipPosition;
+	shooter.moveToWorld(tip[0], tip[1], tip[2]);
+      } else {
+	var shooter = removeCubeShooter(fakeTouchIdentifier);
+	if (shooter) {
+	  shooter.fire(currentTime());
+	  activeShooters.push(shooter);
+	}
+      }
+    }
+    trackedFingers = currentFingers;
+  }
+}
+
 function render() {
 
 //  var cubeRadius = 50;
@@ -1067,8 +1159,10 @@ function render() {
 
   updateTime();
 
+  updateFingers();
+
   // Spin madly the cubes to be shot
-  for (var ii = 0; ii < cubesToShoot.length; ++ii) {
+  for (var ii in cubesToShoot) {
     var randomRotation = new THREE.Euler(2 * Math.PI * Math.random(),
                                          2 * Math.PI * Math.random(),
                                          2 * Math.PI * Math.random());
