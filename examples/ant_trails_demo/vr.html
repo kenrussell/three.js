@@ -541,11 +541,6 @@ CubeShooter.prototype.update = function(time) {
   this.target_.applyAxisAngle(this.axis_, this.angle_);
   this.target_.add(this.centerPoint_);
 
-
-  // FIXME: HACK
-  this.target_.set(1, 0, 0);
-
-
   this.cube_.chaseTarget(this.target_);
 
   var pos = this.cube_.cubeMesh.position;
@@ -839,12 +834,19 @@ function playAll() {
 function updateSound() {
   if (audioLoaded) {
     if (vrControls) {
-//      listenerPostion(camera.position);
+      // FIXME: haven't debugged the camera's position. Adding this in
+      // makes all of the sound disappear.
+      // listenerPostion(camera.position);
 
-      var front = new THREE.Vector3(0, 0, -1);
-      front.transformDirection(camera.matrixWorldInverse);
-      var up = new THREE.Vector3(0, 1, 0);
-      up.transformDirection(camera.matrixWorldInverse);
+      // FIXME: these vectors are hacks -- the correct vectors of
+      // front=(0, 0, -1) and up=(0, 1, 0) didn't sound right, and
+      // using the matrixWorldInverse also didn't sound right. These
+      // sound approximately correct. Needs more debugging.
+      var front = new THREE.Vector3(0, 0, 1);
+      camera.updateMatrixWorld();
+      front.transformDirection(camera.matrixWorld);
+      var up = new THREE.Vector3(0, -1, 0);
+      up.transformDirection(camera.matrixWorld);
       listenerOrientation(front.x, front.y, front.z,
 			  up.x, up.y, up.z);
     }
